@@ -86,9 +86,9 @@ static void lan_start(void) {
         if (ps2ip_getconfig("sm0", &cfg) >= 0) {
             cfg.dhcp_enabled = (lan_profile == 0);
             if (lan_profile != 0) {
-                IP4_ADDR(&cfg.ipaddr, 192,168,50,100 + lan_profile);
-                IP4_ADDR(&cfg.netmask, 255,255,255,0);
-                IP4_ADDR(&cfg.gw, 0,0,0,0);
+                cfg.ipaddr.s_addr = htonl((192U<<24) | (168U<<16) | (50U<<8) | (100U + (unsigned int)lan_profile));
+                cfg.netmask.s_addr = htonl(0xFFFFFF00U);
+                cfg.gw.s_addr = 0;
             }
             lan_config_error = ps2ip_setconfig(&cfg);
         } else lan_config_error = -1;
