@@ -12,9 +12,6 @@ build:
 build/main.o: src/main.c | build
 	$(EE_CC) $(EE_CFLAGS) $(EE_INCS) -c $< -o $@
 
-$(EE_BIN): $(EE_OBJS)
-	$(EE_CC) $(EE_CFLAGS) -o $@ $^ $(EE_LDFLAGS) $(EE_LIBS)
-
 clean:
 	rm -rf build dist
 
