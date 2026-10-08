@@ -20,10 +20,10 @@ jobs:
               elif command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y make
               else echo "No supported package manager to install GNU make" >&2; exit 1; fi
             fi
-            if [ ! -f "$PS2DEV/gsKit/include/gsKit.h" ] && [ ! -f "$GSKIT/include/gsKit.h" ]; then
-              git clone --depth 1 https://github.com/ps2dev/gsKit.git /tmp/gsKit
-              make -C /tmp/gsKit install
-            fi
+            export GSKIT=/tmp/gsKit
+            git clone --depth 1 https://github.com/ps2dev/gsKit.git "$GSKIT"
+            make -C "$GSKIT"
+            test -f "$GSKIT/ee/gs/include/gsKit.h"
             make
           '
       - name: Package ELF and source separately
