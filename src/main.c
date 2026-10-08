@@ -115,7 +115,7 @@ int main(int argc, char **argv) {
         }
         ++frames;
         if (redraw || (frames % 1800000u) == 0) { draw(); redraw = 0; }
-        DelayThread(16000);
+        for (volatile unsigned int spin = 0; spin < 150000u; ++spin) { }
     }
     return 0;
 }
