@@ -54,6 +54,8 @@ static unsigned int lan_nonce = 0, peer_nonce = 0, lan_self_rx = 0, lan_invalid_
 static char peer_address[24] = "NONE";
 static char local_address[24] = "DHCP PENDING";
 static int lan_link = -1, lan_dhcp_status = -1, lan_config_error = 0;
+/* Select before starting LAN: 0 DHCP, 1 static PS2 #1, 2 static PS2 #2. */
+static int lan_profile = 0, lan_send_error = 0;
 static void lan_start(void) {
     struct ip4_addr ip, nm, gw;
     struct sockaddr_in addr;
@@ -82,7 +84,12 @@ static void lan_start(void) {
     {
         t_ip_info cfg;
         if (ps2ip_getconfig("sm0", &cfg) >= 0) {
-            cfg.dhcp_enabled = 1;
+            cfg.dhcp_enabled = (lan_profile == 0);
+            if (lan_profile != 0) {
+                IP4_ADDR(&cfg.ipaddr, 192,168,50,100 + lan_profile);
+                IP4_ADDR(&cfg.netmask, 255,255,255,0);
+                IP4_ADDR(&cfg.gw, 0,0,0,0);
+            }
             lan_config_error = ps2ip_setconfig(&cfg);
         } else lan_config_error = -1;
     }
@@ -114,8 +121,8 @@ static void lan_tick(void) {
             return;
         }
         lan_dhcp_status = cfg.dhcp_status;
-        if (!cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND ||
-            cfg.ipaddr.s_addr == 0) {
+        if (cfg.ipaddr.s_addr == 0 ||
+            (lan_profile == 0 && (!cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND))) {
             strcpy(local_address, "DHCP PENDING");
             return;
         }
@@ -133,6 +140,7 @@ static void lan_tick(void) {
         sprintf(packet, HELLO_PREFIX "%08X", lan_nonce);
         n = sendto(lan_socket, packet, strlen(packet), 0, (struct sockaddr *)&dest, sizeof(dest));
         if (n > 0) lan_tx += (unsigned int)n;
+        else lan_send_error = n;
     }
     /* Use a nonblocking receive flag so controller and graphics never stall. */
     fromlen = sizeof(from);
@@ -425,7 +433,10 @@ static void draw(void) {
         label(34*sx,295*sy,1.05f*sx,muted,line);
         sprintf(line,"SELF RX: %u  INVALID RX: %u",lan_self_rx,lan_invalid_rx);
         label(34*sx,319*sy,1.05f*sx,muted,line);
-        label(34*sx,343*sy,1.10f*sx,muted,"DISCOVERY V2: UDP PORT 39512");
+        sprintf(line,"PROFILE: %s",lan_profile==0?"DHCP":lan_profile==1?"PS2 #1 192.168.50.101":"PS2 #2 192.168.50.102");
+        label(34*sx,343*sy,1.10f*sx,muted,line);
+        sprintf(line,"SEND: %d  %s",lan_send_error,lan_state==0?"LEFT/RIGHT SELECT  X START":"UDP PORT 39512");
+        label(34*sx,365*sy,1.10f*sx,muted,line);
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
         label(34*sx,166*sy,1.6f*sx,muted,"CONTROLLER MENU: ACTIVE");
@@ -457,7 +468,11 @@ int main(int argc, char **argv) {
         if (page == 0) {
             if (pressed & PAD_DOWN) { selected = (selected + 1) % 4; redraw = 1; }
             if (pressed & PAD_UP) { selected = (selected + 3) % 4; redraw = 1; }
-            if (pressed & PAD_CROSS) { page = selected + 1; if(page == 1) probe_network_modules(); if(page == 3) lan_start(); redraw = 1; }
+            if (pressed & PAD_CROSS) { page = selected + 1; if(page == 1) probe_network_modules();  redraw = 1; }
+        } else if (page == 3 && lan_state == 0) {
+            if (pressed & PAD_RIGHT) lan_profile = (lan_profile + 1) % 3;
+            if (pressed & PAD_LEFT) lan_profile = (lan_profile + 2) % 3;
+            if (pressed & PAD_CROSS) lan_start();
         } else if (page == 2) {
             if (pressed & PAD_RIGHT) { layout_index = (layout_index + 1) % LAYOUT_COUNT; redraw = 1; }
             if (pressed & PAD_LEFT) { layout_index = (layout_index + LAYOUT_COUNT - 1) % LAYOUT_COUNT; redraw = 1; }
