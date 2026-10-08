@@ -45,9 +45,12 @@ static int rom_smap = -1, rom_speed = -1;
 extern unsigned char DEV9_irx[], NETMAN_irx[], SMAP_irx[];
 extern unsigned int size_DEV9_irx, size_NETMAN_irx, size_SMAP_irx;
 #define DISCOVERY_PORT 39512
+#define HELLO_PREFIX "PS2MSNET/2 "
+#define HELLO_PREFIX_LEN 11
 static int lan_socket = -1, lan_state = 0, lan_error = 0;
 static unsigned int lan_tx = 0, lan_rx = 0, lan_frames = 0;
 static unsigned int peer_last_frame = 0;
+static unsigned int lan_nonce = 0, peer_nonce = 0, lan_self_rx = 0, lan_invalid_rx = 0;
 static char peer_address[24] = "NONE";
 static char local_address[24] = "DHCP PENDING";
 static int lan_link = -1, lan_dhcp_status = -1, lan_config_error = 0;
@@ -57,6 +60,9 @@ static void lan_start(void) {
     int one = 1, rc;
     if (lan_state) return;
     lan_state = 1;
+    /* Session token distinguishes instances even behind virtual NAT. */
+    lan_nonce = (unsigned int)GetTimerSystemTime() ^ (unsigned int)(unsigned long)&lan_nonce;
+    if (!lan_nonce) lan_nonce = 1;
     SifLoadFileInit();
     SifInitIopHeap();
     sbv_patch_enable_lmb();
@@ -96,6 +102,7 @@ static void lan_tick(void) {
     struct sockaddr_in dest, from;
     socklen_t fromlen;
     char packet[64];
+    unsigned int received_nonce;
     int n;
     if (lan_state != 2) return;
     lan_link = NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0);
@@ -123,22 +130,33 @@ static void lan_tick(void) {
         dest.sin_family = AF_INET;
         dest.sin_port = htons(DISCOVERY_PORT);
         dest.sin_addr.s_addr = htonl(INADDR_BROADCAST);
-        n = sendto(lan_socket, "PS2MSNET/1 HELLO", 16, 0, (struct sockaddr *)&dest, sizeof(dest));
+        sprintf(packet, HELLO_PREFIX "%08X", lan_nonce);
+        n = sendto(lan_socket, packet, strlen(packet), 0, (struct sockaddr *)&dest, sizeof(dest));
         if (n > 0) lan_tx += (unsigned int)n;
     }
     /* Use a nonblocking receive flag so controller and graphics never stall. */
     fromlen = sizeof(from);
     n = recvfrom(lan_socket, packet, sizeof(packet)-1, MSG_DONTWAIT,
                  (struct sockaddr *)&from, &fromlen);
-    if (n >= 16 && !memcmp(packet, "PS2MSNET/1 HELLO", 16)) {
-        unsigned int a = ntohl(from.sin_addr.s_addr);
-        sprintf(peer_address, "%u.%u.%u.%u", (a>>24)&255,(a>>16)&255,(a>>8)&255,a&255);
-        peer_last_frame = lan_frames;
-        lan_rx += (unsigned int)n;
+    if (n > 0) {
+        packet[n] = 0;
+        if (n == 19 && !memcmp(packet, HELLO_PREFIX, HELLO_PREFIX_LEN) &&
+            sscanf(packet + HELLO_PREFIX_LEN, "%8x", &received_nonce) == 1) {
+            if (received_nonce == lan_nonce) {
+                ++lan_self_rx;
+            } else {
+                unsigned int a = ntohl(from.sin_addr.s_addr);
+                sprintf(peer_address, "%u.%u.%u.%u", (a>>24)&255,(a>>16)&255,(a>>8)&255,a&255);
+                peer_nonce = received_nonce;
+                peer_last_frame = lan_frames;
+                lan_rx += (unsigned int)n;
+            }
+        } else ++lan_invalid_rx;
     }
     if (peer_last_frame && lan_frames - peer_last_frame > 600) {
         strcpy(peer_address, "NONE");
         peer_last_frame = 0;
+        peer_nonce = 0;
     }
 }
 static int rom_file_present(const char *path) {
@@ -403,7 +421,11 @@ static void draw(void) {
         label(34*sx,235*sy,1.25f*sx,muted,line);
         sprintf(line,"LINK: %d DHCP: %d CONFIG: %d",lan_link,lan_dhcp_status,lan_config_error);
         label(34*sx,269*sy,1.25f*sx,muted,line);
-        label(34*sx,295*sy,1.20f*sx,muted,"DISCOVERY: UDP PORT 39512");
+        sprintf(line,"SESSION: %08X PEER ID: %08X",lan_nonce,peer_nonce);
+        label(34*sx,295*sy,1.05f*sx,muted,line);
+        sprintf(line,"SELF RX: %u  INVALID RX: %u",lan_self_rx,lan_invalid_rx);
+        label(34*sx,319*sy,1.05f*sx,muted,line);
+        label(34*sx,343*sy,1.10f*sx,muted,"DISCOVERY V2: UDP PORT 39512");
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
         label(34*sx,166*sy,1.6f*sx,muted,"CONTROLLER MENU: ACTIVE");
