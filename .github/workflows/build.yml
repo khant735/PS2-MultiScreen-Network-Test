@@ -36,20 +36,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="dev-${{ github.ref_name }}-${{ github.run_number }}"
-          # Stage under glob-safe paths; retain original names as release asset labels.
-          mkdir -p release-upload
+          # gh CLI treats square brackets as glob syntax even for quoted filenames.
+          # Create the release first, then upload original files via the REST API
+          # so the release asset *name* is the original timestamped filename.
           assets=(dist/*.ELF dist/*-SOURCE.zip dist/manifest.json dist/SHA256SUMS.txt)
-          upload_args=()
-          index=0
           for asset in "${assets[@]}"; do
-            test -f "$asset" || exit 1
-            index=$((index + 1))
-            extension="${asset##*.}"
-            safe_path="release-upload/asset-$index.$extension"
-            cp -- "$asset" "$safe_path"
-            upload_args+=("$safe_path#${asset##*/}")
+            test -f "$asset" || { echo "Missing $asset" >&2; exit 1; }
           done
-          gh release create "$TAG" "${upload_args[@]}" \
+          gh release create "$TAG" \
             --target "$GITHUB_SHA" --prerelease \
             --title "PS2 Multi-Screen development build ${{ github.run_number }} (${{ github.ref_name }})" \
             --notes "Experimental bootstrap build from commit $GITHUB_SHA. Not a validated GT3/GT4 network test."
+          for asset in "${assets[@]}"; do
+            name="${asset##*/}"
+            echo "Uploading release asset: $name"
+            gh api --method POST --hostname uploads.github.com \
+              -H "Content-Type: application/octet-stream" \
+              --input "$asset" \
+              "/repos/${GITHUB_REPOSITORY}/releases/$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" --jq .id)/assets?name=$(python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.argv[1],safe=""))' "$name")"
+          done
