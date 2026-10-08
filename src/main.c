@@ -124,6 +124,7 @@ int main(int argc, char **argv) {
     unsigned long seconds;
     (void)argc; (void)argv;
     build_layouts();
+    init_scr();
     pad_setup();
     draw();
     while (running) {
