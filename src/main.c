@@ -49,6 +49,7 @@ static int lan_socket = -1, lan_state = 0, lan_error = 0;
 static unsigned int lan_tx = 0, lan_rx = 0, lan_frames = 0;
 static unsigned int peer_last_frame = 0;
 static char peer_address[24] = "NONE";
+static char local_address[24] = "DHCP PENDING";
 static void lan_start(void) {
     struct ip4_addr ip, nm, gw;
     struct sockaddr_in addr;
@@ -66,8 +67,8 @@ static void lan_start(void) {
     if (rc < 0) { lan_error = rc; lan_state = -3; return; }
     rc = NetManInit();
     if (rc < 0) { lan_error = rc; lan_state = -4; return; }
-    IP4_ADDR(&ip, 169,254,0,1);
-    IP4_ADDR(&nm, 255,255,0,0);
+    IP4_ADDR(&ip, 0,0,0,0);
+    IP4_ADDR(&nm, 0,0,0,0);
     IP4_ADDR(&gw, 0,0,0,0);
     ps2ipInit(&ip, &nm, &gw);
     {
@@ -95,6 +96,19 @@ static void lan_tick(void) {
     char packet[64];
     int n;
     if (lan_state != 2) return;
+    {
+        t_ip_info cfg;
+        if (ps2ip_getconfig("sm0", &cfg) < 0 ||
+            !cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND ||
+            cfg.ipaddr.addr == 0) {
+            strcpy(local_address, "DHCP PENDING");
+            return;
+        }
+        {
+            unsigned int a = ntohl(cfg.ipaddr.addr);
+            sprintf(local_address,"%u.%u.%u.%u",(a>>24)&255,(a>>16)&255,(a>>8)&255,a&255);
+        }
+    }
     ++lan_frames;
     if ((lan_frames % 120) == 1) {
         memset(&dest, 0, sizeof(dest));
@@ -373,11 +387,13 @@ static void draw(void) {
         label(34*sx,112*sy,2.2f*sx,white,"DIAGNOSTIC COUNTERS");
         sprintf(line,"LAN: %s  ERROR: %d",lan_state==2?"DISCOVERING":lan_state==0?"NOT STARTED":"INITIALIZING / FAILED",lan_error);
         label(34*sx,150*sy,1.28f*sx,muted,line);
+        sprintf(line,"LOCAL IP: %s",local_address);
+        label(34*sx,177*sy,1.25f*sx,muted,line);
         sprintf(line,"TX / RX BYTES: %u / %u",lan_tx,lan_rx);
-        label(34*sx,184*sy,1.40f*sx,muted,line);
+        label(34*sx,202*sy,1.25f*sx,muted,line);
         sprintf(line,"PEER: %s",peer_address);
-        label(34*sx,220*sy,1.40f*sx,muted,line);
-        label(34*sx,255*sy,1.30f*sx,muted,"DISCOVERY: UDP PORT 39512");
+        label(34*sx,235*sy,1.25f*sx,muted,line);
+        label(34*sx,269*sy,1.25f*sx,muted,"DISCOVERY: UDP PORT 39512");
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
         label(34*sx,166*sy,1.6f*sx,muted,"CONTROLLER MENU: ACTIVE");
