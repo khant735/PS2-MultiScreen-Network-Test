@@ -130,20 +130,50 @@ static void label(float x,float y,float scale,u64 color,const char *str) {
         x+=6*scale;
     }
 }
+/* Number screens from the centre outward, keeping screen 1 at the
+ * bottom-centre position. This is a visual proposal, not a peer assignment. */
+static int screen_number(int columns,int rows,int col,int row) {
+    int anchor_col=(columns-1)/2,anchor_row=rows-1;
+    int distance=0,number=0,r,c;
+    for(distance=0;distance<columns+rows;distance++) {
+        for(r=rows-1;r>=0;r--) {
+            for(c=0;c<columns;c++) {
+                int dx=c-anchor_col,dy=anchor_row-r;
+                int d=(dx<0?-dx:dx)+dy;
+                if(d==distance) {
+                    ++number;
+                    if(c==col&&r==row)return number;
+                }
+            }
+        }
+    }
+    return 0;
+}
 static void draw_layout(float x,float y,float w,float h) {
     Layout l=layouts[layout_index];
-    float gap=2.0f, cellw=(w-(l.columns-1)*gap)/l.columns;
+    float gap=3.0f;
+    float cellw=(w-(l.columns-1)*gap)/l.columns;
     float cellh=(h-(l.rows-1)*gap)/l.rows;
-    int r,c,n=0;
-    if(cellw>38)cellw=38;
-    if(cellh>55)cellh=55;
-    for(r=0;r<l.rows;r++)for(c=0;c<l.columns;c++){
-        float px=x+c*(cellw+gap),py=y+r*(cellh+gap);
-        u64 col=(++n==1)?COLOR(30,175,210):COLOR(50,85,125);
+    float actualw,actualh,px0,py0;
+    int r,c;
+    if(cellw>62.0f)cellw=62.0f;
+    if(cellh>54.0f)cellh=54.0f;
+    actualw=l.columns*cellw+(l.columns-1)*gap;
+    actualh=l.rows*cellh+(l.rows-1)*gap;
+    px0=x+(w-actualw)/2.0f;
+    py0=y+(h-actualh)/2.0f;
+    for(r=0;r<l.rows;r++)for(c=0;c<l.columns;c++) {
+        int n=screen_number(l.columns,l.rows,c,r);
+        float px=px0+c*(cellw+gap),py=py0+r*(cellh+gap);
+        u64 col=n==1?COLOR(22,177,197):COLOR(46,83,121);
+        char number[8];
         rect(px,py,cellw,cellh,col);
-        if(cellw>=18&&cellh>=15){
-            char number[8];sprintf(number,"%d",n);
-            label(px+3,py+3,1.4f,COLOR(255,255,255),number);
+        if(cellw>=14.0f&&cellh>=12.0f) {
+            float scale=cellw>=32.0f?1.7f:1.0f;
+            sprintf(number,"%d",n);
+            label(px+(cellw-(float)strlen(number)*6.0f*scale)/2.0f,
+                  py+(cellh-7.0f*scale)/2.0f,scale,
+                  COLOR(255,255,255),number);
         }
     }
 }
@@ -176,8 +206,10 @@ static void draw(void) {
         label(34*sx,105*sy,2.0f*sx,white,line);
         sprintf(line,"%d X %d  -  %d SCREENS",l.columns,l.rows,l.columns*l.rows);
         label(34*sx,145*sy,1.8f*sx,muted,line);
-        draw_layout(36*sx,190*sy,560*sx,150*sy);
-        label(34*sx,375*sy,1.6f*sx,muted,"LEFT / RIGHT CHANGE LAYOUT");
+        rect(30*sx,184*sy,580*sx,175*sy,COLOR(14,31,52));
+        draw_layout(36*sx,190*sy,568*sx,162*sy);
+        label(34*sx,365*sy,1.35f*sx,COLOR(50,210,220),"CYAN: SCREEN 1  -  BOTTOM CENTRE");
+        label(34*sx,385*sy,1.35f*sx,muted,"LEFT / RIGHT CHANGE  -  PREVIEW ONLY");
     } else if(page==3) {
         label(34*sx,112*sy,2.2f*sx,white,"DIAGNOSTIC COUNTERS");
         label(34*sx,166*sy,1.7f*sx,muted,"TX / RX: INACTIVE");
