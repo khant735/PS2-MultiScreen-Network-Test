@@ -61,7 +61,7 @@ static void lan_start(void) {
     if (lan_state) return;
     lan_state = 1;
     /* Session token distinguishes instances even behind virtual NAT. */
-    lan_nonce = (unsigned int)GetTimerSystemTime() ^ (unsigned int)(unsigned long)&lan_nonce;
+    lan_nonce = (unsigned int)clock() ^ (unsigned int)(unsigned long)&lan_nonce;
     if (!lan_nonce) lan_nonce = 1;
     SifLoadFileInit();
     SifInitIopHeap();
