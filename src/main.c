@@ -23,6 +23,8 @@ static int page = 0;
 static int layout_index = 0;
 static int running = 1;
 static int dev9_module_result = -999;
+static int xdev9_module_result = -999;
+static int xdev9serv_module_result = -999;
 static int dev9_probe_attempted = 0;
 
 typedef struct { int columns, rows; } Layout;
@@ -55,6 +57,8 @@ static void probe_network_modules(void) {
     if (dev9_probe_attempted) return;
     dev9_probe_attempted = 1;
     dev9_module_result = SifLoadModule("rom0:DEV9", 0, NULL);
+    xdev9_module_result = SifLoadModule("rom0:XDEV9", 0, NULL);
+    xdev9serv_module_result = SifLoadModule("rom0:XDEV9SERV", 0, NULL);
 }
 
 static unsigned short read_pressed(void) {
@@ -208,18 +212,20 @@ static void draw(void) {
         label(34*sx,380*sy,1.8f*sx,muted,"D-PAD MOVE  X OPEN");
     } else if(page==1) {
         label(34*sx,112*sy,2.2f*sx,white,"NETWORK ADAPTER");
-        label(34*sx,160*sy,1.7f*sx,muted,"DEV9 ROM MODULE:");
-        if (!dev9_probe_attempted)
-            label(34*sx,190*sy,1.5f*sx,muted,"PROBE NOT STARTED");
-        else if (dev9_module_result >= 0)
-            label(34*sx,190*sy,1.5f*sx,COLOR(50,210,220),"MODULE LOAD SUCCEEDED");
-        else
-            label(34*sx,190*sy,1.5f*sx,muted,"MODULE LOAD FAILED");
-        sprintf(line,"DEV9 LOAD RESULT: %d",dev9_module_result);
-        label(34*sx,224*sy,1.35f*sx,muted,line);
-        label(34*sx,260*sy,1.45f*sx,muted,"LAN HARDWARE / LINK: UNKNOWN");
-        label(34*sx,290*sy,1.45f*sx,muted,"I.LINK HARDWARE / LINK: UNKNOWN");
-        label(34*sx,330*sy,1.25f*sx,muted,"SMAP AND LINK PROBING NOT ACTIVE");
+        label(34*sx,150*sy,1.55f*sx,muted,"BIOS ROM MODULE LOAD RESULTS");
+        if (!dev9_probe_attempted) {
+            label(34*sx,185*sy,1.45f*sx,muted,"PROBE NOT STARTED");
+        } else {
+            sprintf(line,"ROM0:DEV9       %d",dev9_module_result);
+            label(34*sx,182*sy,1.5f*sx,muted,line);
+            sprintf(line,"ROM0:XDEV9      %d",xdev9_module_result);
+            label(34*sx,214*sy,1.5f*sx,muted,line);
+            sprintf(line,"ROM0:XDEV9SERV  %d",xdev9serv_module_result);
+            label(34*sx,246*sy,1.5f*sx,muted,line);
+        }
+        label(34*sx,286*sy,1.35f*sx,muted,"LAN HARDWARE / LINK: UNKNOWN");
+        label(34*sx,313*sy,1.35f*sx,muted,"I.LINK HARDWARE / LINK: UNKNOWN");
+        label(34*sx,352*sy,1.18f*sx,muted,"ROM MODULE LOAD ONLY - NO EXTERNAL DRIVERS");
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
