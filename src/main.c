@@ -223,9 +223,11 @@ static void draw(void) {
             sprintf(line,"ROM0:XDEV9SERV  %d",xdev9serv_module_result);
             label(34*sx,246*sy,1.5f*sx,muted,line);
         }
-        label(34*sx,286*sy,1.35f*sx,muted,"LAN HARDWARE / LINK: UNKNOWN");
-        label(34*sx,313*sy,1.35f*sx,muted,"I.LINK HARDWARE / LINK: UNKNOWN");
-        label(34*sx,352*sy,1.18f*sx,muted,"ROM MODULE LOAD ONLY - NO EXTERNAL DRIVERS");
+        label(34*sx,278*sy,1.18f*sx,muted,"DEV9 BUS: NOT PROBED");
+        label(34*sx,298*sy,1.18f*sx,muted,"ETHERNET: TYPE / PRESENCE UNKNOWN");
+        label(34*sx,318*sy,1.18f*sx,muted,"SMAP / LINK: NOT PROBED");
+        label(34*sx,338*sy,1.18f*sx,muted,"I.LINK: PRESENCE NOT PROBED");
+        label(34*sx,365*sy,1.12f*sx,muted,"ROM MODULES ONLY - NO EXTERNAL DRIVERS");
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
