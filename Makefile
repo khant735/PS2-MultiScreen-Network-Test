@@ -1,6 +1,6 @@
 EE_BIN = build/PS2-MultiScreen.ELF
 EE_OBJS = build/main.o
-EE_LIBS = -ldebug
+EE_LIBS = -lpad -ldebug
 EE_INCS =
 EE_CFLAGS = -Wall -O2
 EE_LDFLAGS =
