@@ -100,12 +100,12 @@ static void lan_tick(void) {
         t_ip_info cfg;
         if (ps2ip_getconfig("sm0", &cfg) < 0 ||
             !cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND ||
-            cfg.ipaddr.addr == 0) {
+            cfg.ipaddr.s_addr == 0) {
             strcpy(local_address, "DHCP PENDING");
             return;
         }
         {
-            unsigned int a = ntohl(cfg.ipaddr.addr);
+            unsigned int a = ntohl(cfg.ipaddr.s_addr);
             sprintf(local_address,"%u.%u.%u.%u",(a>>24)&255,(a>>16)&255,(a>>8)&255,a&255);
         }
     }
