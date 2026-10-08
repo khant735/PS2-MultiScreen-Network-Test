@@ -3,7 +3,7 @@ EE_OBJS = build/main.o
 EE_LIBS = -lpad -lgskit -ldmakit -lpatches -ldebug
 EE_INCS = -I$(GSKIT)/ee/gs/include -I$(GSKIT)/ee/dma/include
 EE_CFLAGS = -Wall -O2
-EE_LDFLAGS = -L$(GSKIT)/lib
+EE_LDFLAGS = -L$(GSKIT)/build -L$(GSKIT)/lib -L$(PS2SDK)/ports/lib
 all: $(EE_BIN)
 
 build:
