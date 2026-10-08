@@ -6,6 +6,7 @@
 #include <libpad.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #define PAD_PORT 0
 #define PAD_SLOT 0
@@ -20,7 +21,7 @@ static int selected = 0;
 static int page = 0;
 static int layout_index = 0;
 static int running = 1;
-static unsigned int frames = 0;
+static unsigned long last_seconds = 0;
 
 typedef struct { int columns, rows; } Layout;
 static Layout layouts[LAYOUT_COUNT];
@@ -58,13 +59,34 @@ static unsigned short read_pressed(void) {
     return pressed;
 }
 
+static unsigned long uptime_seconds(void) {
+    clock_t ticks = clock();
+    if (ticks == (clock_t)-1 || CLOCKS_PER_SEC == 0) return 0;
+    return (unsigned long)(ticks / CLOCKS_PER_SEC);
+}
+
+static void draw_layout_preview(const Layout *l) {
+    int r, c;
+    int preview_columns = l->columns > 12 ? 12 : l->columns;
+    scr_printf("PREVIEW (first %d columns):\\n", preview_columns);
+    for (r = 0; r < l->rows; ++r) {
+        scr_printf("  ");
+        for (c = 0; c < preview_columns; ++c)
+            scr_printf("%c", r == 0 && c == 0 ? '1' : '#');
+        if (preview_columns < l->columns) scr_printf(" +%d", l->columns - preview_columns);
+        scr_printf("\\n");
+    }
+    scr_printf("Preview only; device IDs not assigned.\\n");
+}
+
 static void draw(void) {
     const Layout *l = &layouts[layout_index];
-    init_scr();
-    scr_printf("PS2 MULTI-SCREEN NETWORK TEST - DEVELOPMENT\n");
-    scr_printf("==========================================\n");
-    scr_printf("Controller: %s  |  Uptime: %lu frames\n", pad_ready ? "initialized" : "unavailable", (unsigned long)frames);
-    scr_printf("D-PAD: select/change  X: open  TRIANGLE: back\n\n");
+    scr_clear();
+    scr_setXY(1, 1);
+    scr_printf("PS2 MULTI-SCREEN NETWORK TEST\n");
+    scr_printf("-----------------------------\n");
+    scr_printf("PAD: %s | Uptime: %lus\n", pad_ready ? "ready" : "unavailable", uptime_seconds());
+    scr_printf("D-PAD: move  X: open  TRIANGLE: back\n\n");
     if (page == 0) {
         scr_printf("%c Network adapter status\n", selected == 0 ? '>' : ' ');
         scr_printf("%c Screen layout selector\n", selected == 1 ? '>' : ' ');
@@ -79,6 +101,7 @@ static void draw(void) {
         scr_printf("SCREEN LAYOUT %d / %d\n", layout_index + 1, LAYOUT_COUNT);
         scr_printf("Grid: %d columns x %d rows (%d screens)\n", l->columns, l->rows, l->columns * l->rows);
         scr_printf("LEFT/RIGHT: change layout\n");
+        draw_layout_preview(l);
         scr_printf("Screen assignment: not active\n");
     } else if (page == 3) {
         scr_printf("DIAGNOSTIC COUNTERS\n");
@@ -98,6 +121,7 @@ static void draw(void) {
 int main(int argc, char **argv) {
     unsigned short pressed;
     unsigned int redraw = 0;
+    unsigned long seconds;
     (void)argc; (void)argv;
     build_layouts();
     pad_setup();
@@ -113,8 +137,9 @@ int main(int argc, char **argv) {
             if (pressed & PAD_RIGHT) { layout_index = (layout_index + 1) % LAYOUT_COUNT; redraw = 1; }
             if (pressed & PAD_LEFT) { layout_index = (layout_index + LAYOUT_COUNT - 1) % LAYOUT_COUNT; redraw = 1; }
         }
-        ++frames;
-        if (redraw || (frames % 1800000u) == 0) { draw(); redraw = 0; }
+        seconds = uptime_seconds();
+        if (seconds != last_seconds) { last_seconds = seconds; redraw = 1; }
+        if (redraw) { draw(); redraw = 0; }
         for (volatile unsigned int spin = 0; spin < 150000u; ++spin) { }
     }
     return 0;
