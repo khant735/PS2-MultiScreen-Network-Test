@@ -50,6 +50,7 @@ static unsigned int lan_tx = 0, lan_rx = 0, lan_frames = 0;
 static unsigned int peer_last_frame = 0;
 static char peer_address[24] = "NONE";
 static char local_address[24] = "DHCP PENDING";
+static int lan_link = -1, lan_dhcp_status = -1, lan_config_error = 0;
 static void lan_start(void) {
     struct ip4_addr ip, nm, gw;
     struct sockaddr_in addr;
@@ -70,13 +71,14 @@ static void lan_start(void) {
     IP4_ADDR(&ip, 0,0,0,0);
     IP4_ADDR(&nm, 0,0,0,0);
     IP4_ADDR(&gw, 0,0,0,0);
-    ps2ipInit(&ip, &nm, &gw);
+    rc = ps2ipInit(&ip, &nm, &gw);
+    if (rc < 0) { lan_error = rc; lan_state = -7; return; }
     {
         t_ip_info cfg;
         if (ps2ip_getconfig("sm0", &cfg) >= 0) {
             cfg.dhcp_enabled = 1;
-            ps2ip_setconfig(&cfg);
-        }
+            lan_config_error = ps2ip_setconfig(&cfg);
+        } else lan_config_error = -1;
     }
     lan_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (lan_socket < 0) { lan_error = lan_socket; lan_state = -5; return; }
@@ -96,10 +98,16 @@ static void lan_tick(void) {
     char packet[64];
     int n;
     if (lan_state != 2) return;
+    lan_link = NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0);
     {
         t_ip_info cfg;
-        if (ps2ip_getconfig("sm0", &cfg) < 0 ||
-            !cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND ||
+        if (ps2ip_getconfig("sm0", &cfg) < 0) {
+            lan_dhcp_status = -1;
+            strcpy(local_address, "CONFIG UNAVAILABLE");
+            return;
+        }
+        lan_dhcp_status = cfg.dhcp_status;
+        if (!cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND ||
             cfg.ipaddr.s_addr == 0) {
             strcpy(local_address, "DHCP PENDING");
             return;
@@ -393,7 +401,9 @@ static void draw(void) {
         label(34*sx,202*sy,1.25f*sx,muted,line);
         sprintf(line,"PEER: %s",peer_address);
         label(34*sx,235*sy,1.25f*sx,muted,line);
-        label(34*sx,269*sy,1.25f*sx,muted,"DISCOVERY: UDP PORT 39512");
+        sprintf(line,"LINK: %d DHCP: %d CONFIG: %d",lan_link,lan_dhcp_status,lan_config_error);
+        label(34*sx,269*sy,1.25f*sx,muted,line);
+        label(34*sx,295*sy,1.20f*sx,muted,"DISCOVERY: UDP PORT 39512");
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
         label(34*sx,166*sy,1.6f*sx,muted,"CONTROLLER MENU: ACTIVE");
