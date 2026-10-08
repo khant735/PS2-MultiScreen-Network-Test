@@ -1,0 +1,24 @@
+name: PS2 development build
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'release/**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with PS2DEV
+        run: docker run --rm -v "$PWD:/src" -w /src ps2dev/ps2dev:latest make
+      - name: Package ELF and source separately
+        run: python3 scripts/package.py --version 0.1.0
+      - name: Upload development artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: PS2-MultiScreen-build-${{ github.run_number }}
+          path: dist/*
+          retention-days: 90
