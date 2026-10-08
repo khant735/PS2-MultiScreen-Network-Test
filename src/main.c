@@ -21,7 +21,6 @@ static int selected = 0;
 static int page = 0;
 static int layout_index = 0;
 static int running = 1;
-static unsigned long last_seconds = 0;
 
 typedef struct { int columns, rows; } Layout;
 static Layout layouts[LAYOUT_COUNT];
@@ -121,7 +120,6 @@ static void draw(void) {
 int main(int argc, char **argv) {
     unsigned short pressed;
     unsigned int redraw = 0;
-    unsigned long seconds;
     (void)argc; (void)argv;
     build_layouts();
     init_scr();
@@ -138,8 +136,6 @@ int main(int argc, char **argv) {
             if (pressed & PAD_RIGHT) { layout_index = (layout_index + 1) % LAYOUT_COUNT; redraw = 1; }
             if (pressed & PAD_LEFT) { layout_index = (layout_index + LAYOUT_COUNT - 1) % LAYOUT_COUNT; redraw = 1; }
         }
-        seconds = uptime_seconds();
-        if (seconds != last_seconds) { last_seconds = seconds; redraw = 1; }
         if (redraw) { draw(); redraw = 0; }
         for (volatile unsigned int spin = 0; spin < 150000u; ++spin) { }
     }
