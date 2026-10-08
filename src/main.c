@@ -33,6 +33,7 @@ static const char *family_estimate = "UNKNOWN";
 static char rom_region = '-';
 static char rom_machine = '-';
 static int rom_eeconf = -1, rom_atad = -1, rom_iopbtconf = -1;
+static int rom_smap = -1, rom_speed = -1;
 static int rom_file_present(const char *path) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return 0;
@@ -71,6 +72,8 @@ static void probe_romver(void) {
     rom_eeconf = rom_file_present("rom0:EECONF");
     rom_atad = rom_file_present("rom0:ATAD");
     rom_iopbtconf = rom_file_present("rom0:IOPBTCONF");
+    rom_smap = rom_file_present("rom0:SMAP");
+    rom_speed = rom_file_present("rom0:SPEED");
     if (fd < 0) return;
     n = read(fd, v, 16);
     close(fd);
@@ -269,8 +272,9 @@ static void draw(void) {
         sprintf(line,"ROM EECONF:%s ATAD:%s IOPBTCONF:%s",
             rom_eeconf==1?"YES":"NO",rom_atad==1?"YES":"NO",rom_iopbtconf==1?"YES":"NO");
         label(34*sx,312*sy,1.05f*sx,muted,line);
-        label(34*sx,335*sy,1.10f*sx,muted,"ETHERNET / I.LINK HARDWARE: NOT PROBED");
-        label(34*sx,365*sy,1.04f*sx,muted,"ROM FILES ONLY - MAC / LINK NOT TESTED");
+        sprintf(line,"ROM SMAP:%s SPEED:%s",rom_smap==1?"YES":"NO",rom_speed==1?"YES":"NO");
+        label(34*sx,334*sy,1.10f*sx,muted,line);
+        label(34*sx,365*sy,1.04f*sx,muted,"HARDWARE / MAC / LINK NOT PROBED");
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
