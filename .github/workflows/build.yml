@@ -36,9 +36,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="dev-${{ github.ref_name }}-${{ github.run_number }}"
-          # Prevent gh from treating timestamp [..] characters as wildcard patterns.
+          # GitHub CLI treats [timestamp] in paths as glob syntax; use file:// literals.
           assets=(dist/*.ELF dist/*-SOURCE.zip dist/manifest.json dist/SHA256SUMS.txt)
-          GH_GLOB_DISABLE=1 gh release create "$TAG" "${assets[@]}" \
+          for asset in "${assets[@]}"; do
+            test -f "$asset" || { echo "Missing asset: $asset" >&2; exit 1; }
+          done
+          literal_assets=()
+          for asset in "${assets[@]}"; do literal_assets+=("file://$PWD/$asset"); done
+          gh release create "$TAG" "${literal_assets[@]}" \
             --target "$GITHUB_SHA" --prerelease \
             --title "PS2 Multi-Screen development build ${{ github.run_number }} (${{ github.ref_name }})" \
             --notes "Experimental bootstrap build from commit $GITHUB_SHA. Not a validated GT3/GT4 network test."
