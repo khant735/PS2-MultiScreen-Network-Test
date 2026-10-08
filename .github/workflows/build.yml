@@ -46,7 +46,7 @@ jobs:
           gh release create "$TAG" \
             --target "$GITHUB_SHA" --prerelease \
             --title "PS2 Multi-Screen development build ${{ github.run_number }} (${{ github.ref_name }})" \
-            --notes "Experimental bootstrap build from commit $GITHUB_SHA. Not a validated GT3/GT4 network test."
+            --notes "Experimental bootstrap build from commit $GITHUB_SHA. Not a validated network test."
           RELEASE_ID=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$TAG" --jq .id)
           for asset in "${assets[@]}"; do
             name="${asset##*/}"
