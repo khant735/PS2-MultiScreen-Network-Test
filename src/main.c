@@ -22,6 +22,8 @@ static int selected = 0;
 static int page = 0;
 static int layout_index = 0;
 static int running = 1;
+static int dev9_module_result = -999;
+static int dev9_probe_attempted = 0;
 
 typedef struct { int columns, rows; } Layout;
 static Layout layouts[LAYOUT_COUNT];
@@ -45,6 +47,14 @@ static void pad_setup(void) {
     if (padPortOpen(PAD_PORT, PAD_SLOT, pad_buffer) == 0) return;
     state = padGetState(PAD_PORT, PAD_SLOT);
     pad_ready = state >= 0;
+}
+
+/* Probe ROM driver availability only. A successful module load is NOT
+ * proof of physical Ethernet hardware or an active link. */
+static void probe_network_modules(void) {
+    if (dev9_probe_attempted) return;
+    dev9_probe_attempted = 1;
+    dev9_module_result = SifLoadModule("rom0:DEV9", 0, NULL);
 }
 
 static unsigned short read_pressed(void) {
@@ -198,9 +208,18 @@ static void draw(void) {
         label(34*sx,380*sy,1.8f*sx,muted,"D-PAD MOVE  X OPEN");
     } else if(page==1) {
         label(34*sx,112*sy,2.2f*sx,white,"NETWORK ADAPTER");
-        label(34*sx,166*sy,1.8f*sx,muted,"LAN: NOT PROBED");
-        label(34*sx,200*sy,1.8f*sx,muted,"I.LINK: NOT PROBED");
-        label(34*sx,244*sy,1.6f*sx,muted,"NO TRANSPORT INITIALIZED");
+        label(34*sx,160*sy,1.7f*sx,muted,"DEV9 ROM MODULE:");
+        if (!dev9_probe_attempted)
+            label(34*sx,190*sy,1.5f*sx,muted,"PROBE NOT STARTED");
+        else if (dev9_module_result >= 0)
+            label(34*sx,190*sy,1.5f*sx,COLOR(50,210,220),"MODULE LOAD SUCCEEDED");
+        else
+            label(34*sx,190*sy,1.5f*sx,muted,"MODULE LOAD FAILED");
+        sprintf(line,"DEV9 LOAD RESULT: %d",dev9_module_result);
+        label(34*sx,224*sy,1.35f*sx,muted,line);
+        label(34*sx,260*sy,1.45f*sx,muted,"LAN HARDWARE / LINK: UNKNOWN");
+        label(34*sx,290*sy,1.45f*sx,muted,"I.LINK HARDWARE / LINK: UNKNOWN");
+        label(34*sx,330*sy,1.25f*sx,muted,"SMAP AND LINK PROBING NOT ACTIVE");
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
@@ -245,7 +264,7 @@ int main(int argc, char **argv) {
         if (page == 0) {
             if (pressed & PAD_DOWN) { selected = (selected + 1) % 4; redraw = 1; }
             if (pressed & PAD_UP) { selected = (selected + 3) % 4; redraw = 1; }
-            if (pressed & PAD_CROSS) { page = selected + 1; redraw = 1; }
+            if (pressed & PAD_CROSS) { page = selected + 1; if(page == 1) probe_network_modules(); redraw = 1; }
         } else if (page == 2) {
             if (pressed & PAD_RIGHT) { layout_index = (layout_index + 1) % LAYOUT_COUNT; redraw = 1; }
             if (pressed & PAD_LEFT) { layout_index = (layout_index + LAYOUT_COUNT - 1) % LAYOUT_COUNT; redraw = 1; }
