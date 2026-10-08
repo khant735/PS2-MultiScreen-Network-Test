@@ -16,7 +16,6 @@
 #include <ps2ip.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <lwip/inet.h>
 
 
 #define PAD_PORT 0
