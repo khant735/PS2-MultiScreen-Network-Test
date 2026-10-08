@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Compile with PS2DEV
@@ -20,15 +20,23 @@ jobs:
               elif command -v apt-get >/dev/null 2>&1; then apt-get update && apt-get install -y make
               else echo "No supported package manager to install GNU make" >&2; exit 1; fi
             fi
-            echo "PS2SDK=${PS2SDK:-unset}"
-            command -v mips64r5900el-ps2-elf-gcc || true
             make
           '
       - name: Package ELF and source separately
         run: python3 scripts/package.py --version 0.1.0
-      - name: Upload development artifacts
+      - name: Upload temporary build artifact
         uses: actions/upload-artifact@v4
         with:
           name: PS2-MultiScreen-build-${{ github.run_number }}
           path: dist/*
           retention-days: 90
+      - name: Publish separately downloadable development release assets
+        if: github.event_name != 'pull_request' && github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="dev-${{ github.ref_name }}-${{ github.run_number }}"
+          gh release create "$TAG" dist/*.ELF dist/*-SOURCE.zip dist/manifest.json dist/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "PS2 Multi-Screen development build ${{ github.run_number }} (${{ github.ref_name }})" \
+            --notes "Experimental bootstrap build from commit $GITHUB_SHA. Not a validated GT3/GT4 network test."
