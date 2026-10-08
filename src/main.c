@@ -56,6 +56,8 @@ static char local_address[24] = "DHCP PENDING";
 static int lan_link = -1, lan_dhcp_status = -1, lan_config_error = 0;
 /* Select before starting LAN: 0 DHCP, 1 static PS2 #1, 2 static PS2 #2. */
 static int lan_profile = 0, lan_send_error = 0;
+static unsigned int lan_bcast_tx = 0, lan_ucast_tx = 0, lan_bcast_rx = 0, lan_ucast_rx = 0;
+static unsigned int lan_bcast_fail = 0, lan_ucast_fail = 0;
 static void lan_start(void) {
     struct ip4_addr ip, nm, gw;
     struct sockaddr_in addr;
@@ -139,8 +141,15 @@ static void lan_tick(void) {
         dest.sin_addr.s_addr = htonl(INADDR_BROADCAST);
         sprintf(packet, HELLO_PREFIX "%08X", lan_nonce);
         n = sendto(lan_socket, packet, strlen(packet), 0, (struct sockaddr *)&dest, sizeof(dest));
-        if (n > 0) lan_tx += (unsigned int)n;
-        else lan_send_error = n;
+        if (n > 0) { lan_tx += (unsigned int)n; lan_bcast_tx++; }
+        else { lan_send_error = n; lan_bcast_fail++; }
+        /* Static profiles also send to the other console directly. */
+        if (lan_profile != 0) {
+            dest.sin_addr.s_addr = htonl((192U<<24)|(168U<<16)|(50U<<8)|(lan_profile==1?102U:101U));
+            n = sendto(lan_socket, packet, strlen(packet), 0, (struct sockaddr *)&dest, sizeof(dest));
+            if (n > 0) { lan_tx += (unsigned int)n; lan_ucast_tx++; }
+            else { lan_send_error = n; lan_ucast_fail++; }
+        }
     }
     /* Use a nonblocking receive flag so controller and graphics never stall. */
     fromlen = sizeof(from);
@@ -158,6 +167,8 @@ static void lan_tick(void) {
                 peer_nonce = received_nonce;
                 peer_last_frame = lan_frames;
                 lan_rx += (unsigned int)n;
+                if (ntohl(from.sin_addr.s_addr) == ((192U<<24)|(168U<<16)|(50U<<8)|(lan_profile==1?102U:101U)) && lan_profile != 0) lan_ucast_rx++;
+                else lan_bcast_rx++;
             }
         } else ++lan_invalid_rx;
     }
@@ -435,8 +446,10 @@ static void draw(void) {
         label(34*sx,319*sy,1.05f*sx,muted,line);
         sprintf(line,"PROFILE: %s",lan_profile==0?"DHCP":lan_profile==1?"PS2 #1 192.168.50.101":"PS2 #2 192.168.50.102");
         label(34*sx,343*sy,1.10f*sx,muted,line);
-        sprintf(line,"SEND: %d  %s",lan_send_error,lan_state==0?"LEFT/RIGHT SELECT  X START":"UDP PORT 39512");
-        label(34*sx,365*sy,1.10f*sx,muted,line);
+        sprintf(line,"B TX/RX:%u/%u  U TX/RX:%u/%u",lan_bcast_tx,lan_bcast_rx,lan_ucast_tx,lan_ucast_rx);
+        label(34*sx,365*sy,1.02f*sx,muted,line);
+        sprintf(line,"B FAIL:%u U FAIL:%u LAST SEND:%d",lan_bcast_fail,lan_ucast_fail,lan_send_error);
+        label(34*sx,385*sy,0.95f*sx,muted,line);
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
         label(34*sx,166*sy,1.6f*sx,muted,"CONTROLLER MENU: ACTIVE");
