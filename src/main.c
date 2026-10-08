@@ -5,6 +5,8 @@
 #include <sifrpc.h>
 #include <loadfile.h>
 #include <libpad.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -26,6 +28,8 @@ static int dev9_module_result = -999;
 static int xdev9_module_result = -999;
 static int xdev9serv_module_result = -999;
 static int dev9_probe_attempted = 0;
+static char bios_romver[17] = "UNAVAILABLE";
+static const char *family_estimate = "UNKNOWN";
 
 typedef struct { int columns, rows; } Layout;
 static Layout layouts[LAYOUT_COUNT];
@@ -51,11 +55,29 @@ static void pad_setup(void) {
     pad_ready = state >= 0;
 }
 
+static void probe_romver(void) {
+    char v[17] = {0};
+    int fd = open("rom0:ROMVER", O_RDONLY);
+    int n, i, version = 0;
+    if (fd < 0) return;
+    n = read(fd, v, 16);
+    close(fd);
+    if (n < 4) return;
+    for (i = 0; i < 4; ++i) {
+        if (v[i] < '0' || v[i] > '9') return;
+        version = version * 10 + v[i] - '0';
+    }
+    memcpy(bios_romver, v, 16);
+    bios_romver[16] = 0;
+    family_estimate = version <= 190 ? "FAT (ESTIMATE)" : "SLIM (ESTIMATE)";
+}
+
 /* Probe ROM driver availability only. A successful module load is NOT
  * proof of physical Ethernet hardware or an active link. */
 static void probe_network_modules(void) {
     if (dev9_probe_attempted) return;
     dev9_probe_attempted = 1;
+    probe_romver();
     dev9_module_result = SifLoadModule("rom0:DEV9", 0, NULL);
     xdev9_module_result = SifLoadModule("rom0:XDEV9", 0, NULL);
     xdev9serv_module_result = SifLoadModule("rom0:XDEV9SERV", 0, NULL);
@@ -223,11 +245,13 @@ static void draw(void) {
             sprintf(line,"ROM0:XDEV9SERV  %d",xdev9serv_module_result);
             label(34*sx,246*sy,1.5f*sx,muted,line);
         }
-        label(34*sx,278*sy,1.18f*sx,muted,"DEV9 BUS: NOT PROBED");
-        label(34*sx,298*sy,1.18f*sx,muted,"ETHERNET: TYPE / PRESENCE UNKNOWN");
-        label(34*sx,318*sy,1.18f*sx,muted,"SMAP / LINK: NOT PROBED");
-        label(34*sx,338*sy,1.18f*sx,muted,"I.LINK: PRESENCE NOT PROBED");
-        label(34*sx,365*sy,1.12f*sx,muted,"ROM MODULES ONLY - NO EXTERNAL DRIVERS");
+        sprintf(line,"ROMVER: %s",bios_romver);
+        label(34*sx,274*sy,1.16f*sx,muted,line);
+        sprintf(line,"FAMILY: %s",family_estimate);
+        label(34*sx,296*sy,1.16f*sx,muted,line);
+        label(34*sx,318*sy,1.16f*sx,muted,"ETHERNET / SMAP: NOT PROBED");
+        label(34*sx,340*sy,1.16f*sx,muted,"I.LINK: NOT PROBED");
+        label(34*sx,366*sy,1.08f*sx,muted,"BIOS ESTIMATE - NO EXTERNAL DRIVERS");
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
