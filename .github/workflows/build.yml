@@ -36,14 +36,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="dev-${{ github.ref_name }}-${{ github.run_number }}"
-          # GitHub CLI treats [timestamp] in paths as glob syntax; use file:// literals.
+          # Stage under glob-safe paths; retain original names as release asset labels.
+          mkdir -p release-upload
           assets=(dist/*.ELF dist/*-SOURCE.zip dist/manifest.json dist/SHA256SUMS.txt)
+          upload_args=()
+          index=0
           for asset in "${assets[@]}"; do
-            test -f "$asset" || { echo "Missing asset: $asset" >&2; exit 1; }
+            test -f "$asset" || exit 1
+            index=$((index + 1))
+            extension="${asset##*.}"
+            safe_path="release-upload/asset-$index.$extension"
+            cp -- "$asset" "$safe_path"
+            upload_args+=("$safe_path#${asset##*/}")
           done
-          literal_assets=()
-          for asset in "${assets[@]}"; do literal_assets+=("file://$PWD/$asset"); done
-          gh release create "$TAG" "${literal_assets[@]}" \
+          gh release create "$TAG" "${upload_args[@]}" \
             --target "$GITHUB_SHA" --prerelease \
             --title "PS2 Multi-Screen development build ${{ github.run_number }} (${{ github.ref_name }})" \
             --notes "Experimental bootstrap build from commit $GITHUB_SHA. Not a validated GT3/GT4 network test."
