@@ -30,6 +30,15 @@ static int xdev9serv_module_result = -999;
 static int dev9_probe_attempted = 0;
 static char bios_romver[17] = "UNAVAILABLE";
 static const char *family_estimate = "UNKNOWN";
+static char rom_region = '-';
+static char rom_machine = '-';
+static int rom_eeconf = -1, rom_atad = -1, rom_iopbtconf = -1;
+static int rom_file_present(const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    close(fd);
+    return 1;
+}
 
 typedef struct { int columns, rows; } Layout;
 static Layout layouts[LAYOUT_COUNT];
@@ -59,6 +68,9 @@ static void probe_romver(void) {
     char v[17] = {0};
     int fd = open("rom0:ROMVER", O_RDONLY);
     int n, i, version = 0;
+    rom_eeconf = rom_file_present("rom0:EECONF");
+    rom_atad = rom_file_present("rom0:ATAD");
+    rom_iopbtconf = rom_file_present("rom0:IOPBTCONF");
     if (fd < 0) return;
     n = read(fd, v, 16);
     close(fd);
@@ -69,6 +81,11 @@ static void probe_romver(void) {
     }
     memcpy(bios_romver, v, 16);
     bios_romver[16] = 0;
+    /* ROMVER: four version digits, region, machine type, date. */
+    if (n >= 6) {
+        rom_region = v[4];
+        rom_machine = v[5];
+    }
     family_estimate = version <= 190 ? "FAT (ESTIMATE)" : "SLIM (ESTIMATE)";
 }
 
@@ -246,12 +263,14 @@ static void draw(void) {
             label(34*sx,246*sy,1.5f*sx,muted,line);
         }
         sprintf(line,"ROMVER: %s",bios_romver);
-        label(34*sx,274*sy,1.16f*sx,muted,line);
-        sprintf(line,"FAMILY: %s",family_estimate);
-        label(34*sx,296*sy,1.16f*sx,muted,line);
-        label(34*sx,318*sy,1.16f*sx,muted,"ETHERNET / SMAP: NOT PROBED");
-        label(34*sx,340*sy,1.16f*sx,muted,"I.LINK: NOT PROBED");
-        label(34*sx,366*sy,1.08f*sx,muted,"BIOS ESTIMATE - NO EXTERNAL DRIVERS");
+        label(34*sx,268*sy,1.13f*sx,muted,line);
+        sprintf(line,"REGION: %c  MACHINE: %c  %s",rom_region,rom_machine,family_estimate);
+        label(34*sx,290*sy,1.10f*sx,muted,line);
+        sprintf(line,"ROM EECONF:%s ATAD:%s IOPBTCONF:%s",
+            rom_eeconf==1?"YES":"NO",rom_atad==1?"YES":"NO",rom_iopbtconf==1?"YES":"NO");
+        label(34*sx,312*sy,1.05f*sx,muted,line);
+        label(34*sx,335*sy,1.10f*sx,muted,"ETHERNET / I.LINK HARDWARE: NOT PROBED");
+        label(34*sx,365*sy,1.04f*sx,muted,"ROM FILES ONLY - MAC / LINK NOT TESTED");
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
