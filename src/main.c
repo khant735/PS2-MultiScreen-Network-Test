@@ -10,6 +10,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <iopheap.h>
+#include <sbv_patches.h>
+#include <netman.h>
+#include <ps2ip.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <lwip/inet.h>
+
 
 #define PAD_PORT 0
 #define PAD_SLOT 0
@@ -34,6 +42,84 @@ static char rom_region = '-';
 static char rom_machine = '-';
 static int rom_eeconf = -1, rom_atad = -1, rom_iopbtconf = -1;
 static int rom_smap = -1, rom_speed = -1;
+/* LAN discovery protocol v1: UDP broadcast, automatic peer timeout. */
+extern unsigned char DEV9_irx[], NETMAN_irx[], SMAP_irx[];
+extern unsigned int size_DEV9_irx, size_NETMAN_irx, size_SMAP_irx;
+#define DISCOVERY_PORT 39512
+static int lan_socket = -1, lan_state = 0, lan_error = 0;
+static unsigned int lan_tx = 0, lan_rx = 0, lan_frames = 0;
+static unsigned int peer_last_frame = 0;
+static char peer_address[24] = "NONE";
+static void lan_start(void) {
+    struct ip4_addr ip, nm, gw;
+    struct sockaddr_in addr;
+    int one = 1, rc;
+    if (lan_state) return;
+    lan_state = 1;
+    SifLoadFileInit();
+    SifInitIopHeap();
+    sbv_patch_enable_lmb();
+    rc = SifExecModuleBuffer(DEV9_irx, size_DEV9_irx, 0, NULL, NULL);
+    if (rc < 0) { lan_error = rc; lan_state = -1; return; }
+    rc = SifExecModuleBuffer(NETMAN_irx, size_NETMAN_irx, 0, NULL, NULL);
+    if (rc < 0) { lan_error = rc; lan_state = -2; return; }
+    rc = SifExecModuleBuffer(SMAP_irx, size_SMAP_irx, 0, NULL, NULL);
+    if (rc < 0) { lan_error = rc; lan_state = -3; return; }
+    rc = NetManInit();
+    if (rc < 0) { lan_error = rc; lan_state = -4; return; }
+    IP4_ADDR(&ip, 169,254,0,1);
+    IP4_ADDR(&nm, 255,255,0,0);
+    IP4_ADDR(&gw, 0,0,0,0);
+    ps2ipInit(&ip, &nm, &gw);
+    {
+        t_ip_info cfg;
+        if (ps2ip_getconfig("sm0", &cfg) >= 0) {
+            cfg.dhcp_enabled = 1;
+            ps2ip_setconfig(&cfg);
+        }
+    }
+    lan_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (lan_socket < 0) { lan_error = lan_socket; lan_state = -5; return; }
+    setsockopt(lan_socket, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(DISCOVERY_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (bind(lan_socket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        lan_state = -6; lan_error = -6; return;
+    }
+    lan_state = 2;
+}
+static void lan_tick(void) {
+    struct sockaddr_in dest, from;
+    socklen_t fromlen;
+    char packet[64];
+    int n;
+    if (lan_state != 2) return;
+    ++lan_frames;
+    if ((lan_frames % 120) == 1) {
+        memset(&dest, 0, sizeof(dest));
+        dest.sin_family = AF_INET;
+        dest.sin_port = htons(DISCOVERY_PORT);
+        dest.sin_addr.s_addr = htonl(INADDR_BROADCAST);
+        n = sendto(lan_socket, "PS2MSNET/1 HELLO", 16, 0, (struct sockaddr *)&dest, sizeof(dest));
+        if (n > 0) lan_tx += (unsigned int)n;
+    }
+    /* Use a nonblocking receive flag so controller and graphics never stall. */
+    fromlen = sizeof(from);
+    n = recvfrom(lan_socket, packet, sizeof(packet)-1, MSG_DONTWAIT,
+                 (struct sockaddr *)&from, &fromlen);
+    if (n >= 16 && !memcmp(packet, "PS2MSNET/1 HELLO", 16)) {
+        unsigned int a = ntohl(from.sin_addr.s_addr);
+        sprintf(peer_address, "%u.%u.%u.%u", (a>>24)&255,(a>>16)&255,(a>>8)&255,a&255);
+        peer_last_frame = lan_frames;
+        lan_rx += (unsigned int)n;
+    }
+    if (peer_last_frame && lan_frames - peer_last_frame > 600) {
+        strcpy(peer_address, "NONE");
+        peer_last_frame = 0;
+    }
+}
 static int rom_file_present(const char *path) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return 0;
@@ -286,13 +372,17 @@ static void draw(void) {
         label(34*sx,385*sy,1.35f*sx,muted,"LEFT / RIGHT CHANGE  -  PREVIEW ONLY");
     } else if(page==3) {
         label(34*sx,112*sy,2.2f*sx,white,"DIAGNOSTIC COUNTERS");
-        label(34*sx,166*sy,1.7f*sx,muted,"TX / RX: INACTIVE");
-        label(34*sx,200*sy,1.7f*sx,muted,"PEERS: NOT DISCOVERED");
-        label(34*sx,234*sy,1.7f*sx,muted,"SYNC: NOT STARTED");
+        sprintf(line,"LAN: %s  ERROR: %d",lan_state==2?"DISCOVERING":lan_state==0?"NOT STARTED":"INITIALIZING / FAILED",lan_error);
+        label(34*sx,150*sy,1.28f*sx,muted,line);
+        sprintf(line,"TX / RX BYTES: %u / %u",lan_tx,lan_rx);
+        label(34*sx,184*sy,1.40f*sx,muted,line);
+        sprintf(line,"PEER: %s",peer_address);
+        label(34*sx,220*sy,1.40f*sx,muted,line);
+        label(34*sx,255*sy,1.30f*sx,muted,"DISCOVERY: UDP PORT 39512");
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
         label(34*sx,166*sy,1.6f*sx,muted,"CONTROLLER MENU: ACTIVE");
-        label(34*sx,200*sy,1.6f*sx,muted,"NETWORK I/O: NOT IMPLEMENTED");
+        label(34*sx,200*sy,1.6f*sx,muted,"LAN DISCOVERY: EXPERIMENTAL");
     }
     rect(20*sx,405*sy,600*sx,1*sy,COLOR(65,90,115));
     label(34*sx,418*sy,1.35f*sx,muted,"NOT A VALIDATED NETWORK TEST");
@@ -314,12 +404,13 @@ int main(int argc, char **argv) {
     gsKit_init_screen(gs);
     gsKit_mode_switch(gs,GS_ONESHOT);
     while (running) {
+        lan_tick();
         pressed = read_pressed();
         if (pressed & PAD_TRIANGLE) { page = 0; redraw = 1; }
         if (page == 0) {
             if (pressed & PAD_DOWN) { selected = (selected + 1) % 4; redraw = 1; }
             if (pressed & PAD_UP) { selected = (selected + 3) % 4; redraw = 1; }
-            if (pressed & PAD_CROSS) { page = selected + 1; if(page == 1) probe_network_modules(); redraw = 1; }
+            if (pressed & PAD_CROSS) { page = selected + 1; if(page == 1) probe_network_modules(); if(page == 3) lan_start(); redraw = 1; }
         } else if (page == 2) {
             if (pressed & PAD_RIGHT) { layout_index = (layout_index + 1) % LAYOUT_COUNT; redraw = 1; }
             if (pressed & PAD_LEFT) { layout_index = (layout_index + LAYOUT_COUNT - 1) % LAYOUT_COUNT; redraw = 1; }
