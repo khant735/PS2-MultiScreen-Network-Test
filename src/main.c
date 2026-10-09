@@ -71,6 +71,12 @@ static unsigned int lan_bcast_fail = 0, lan_ucast_fail = 0;
 #endif
 static int tcp_fd=-1, tcp_listen=-1, tcp_state=0, tcp_errno=0;
 static unsigned int tcp_tx=0,tcp_rx=0,tcp_tries=0,tcp_attempt_frame=0;
+/* Socket diagnostics retained across retries for on-screen inspection. */
+static int tcp_connect_rc=0,tcp_connect_errno=0,tcp_select_rc=0;
+static int tcp_so_error=0,tcp_so_result=0,tcp_last_recv=0,tcp_last_send=0;
+static unsigned int tcp_connected_count=0;
+static unsigned int tcp_target_ip=((unsigned int)TCP_TEST_TARGET_A<<24)|((unsigned int)TCP_TEST_TARGET_B<<16)|((unsigned int)TCP_TEST_TARGET_C<<8)|(unsigned int)TCP_TEST_TARGET_D;
+static unsigned int tcp_gateway_ip=(192U<<24)|(168U<<16)|(50U<<8)|1U;
 static void tcp_setup(void) {
     struct sockaddr_in a;
     int flags;
@@ -105,23 +111,26 @@ static void tcp_tick(void) {
         if(tcp_fd<0){tcp_errno=errno;return;}
         flags=fcntl(tcp_fd,F_GETFL,0);fcntl(tcp_fd,F_SETFL,flags|O_NONBLOCK);
         memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons(TCP_TEST_PORT);
-        a.sin_addr.s_addr=htonl(((unsigned int)TCP_TEST_TARGET_A<<24)|((unsigned int)TCP_TEST_TARGET_B<<16)|((unsigned int)TCP_TEST_TARGET_C<<8)|(unsigned int)TCP_TEST_TARGET_D);
+        a.sin_addr.s_addr=htonl(tcp_target_ip);
         n=connect(tcp_fd,(struct sockaddr*)&a,sizeof(a));
-        if(n==0)tcp_state=4;
+        tcp_connect_rc=n;tcp_connect_errno=(n<0)?errno:0;
+        if(n==0){tcp_state=4;tcp_connected_count++;}
         else if(errno==EINPROGRESS || errno==EWOULDBLOCK)tcp_state=3;
         else{tcp_errno=errno;close(tcp_fd);tcp_fd=-1;}
     }else if(tcp_state==3){
         FD_ZERO(&w);FD_SET(tcp_fd,&w);tv.tv_sec=0;tv.tv_usec=0;
-        n=select(tcp_fd+1,NULL,&w,NULL,&tv);
+        n=select(tcp_fd+1,NULL,&w,NULL,&tv);tcp_select_rc=n;
         if(n>0){
             len=sizeof(e);
-            if(getsockopt(tcp_fd,SOL_SOCKET,SO_ERROR,&e,&len)==0 && !e)tcp_state=4;
+            tcp_so_result=getsockopt(tcp_fd,SOL_SOCKET,SO_ERROR,&e,&len);
+            tcp_so_error=e;
+            if(tcp_so_result==0 && !e){tcp_state=4;tcp_connected_count++;}
             else{tcp_errno=e?e:errno;close(tcp_fd);tcp_fd=-1;tcp_state=2;}
         }else if(n<0 || lan_frames-tcp_attempt_frame>120){
             tcp_errno=n<0?errno:ETIMEDOUT;close(tcp_fd);tcp_fd=-1;tcp_state=2;
         }
     }else if(tcp_state==4){
-        n=recv(tcp_fd,buf,sizeof(buf),MSG_DONTWAIT);
+        n=recv(tcp_fd,buf,sizeof(buf),MSG_DONTWAIT);tcp_last_recv=n;
         if(n>0)tcp_rx+=(unsigned int)n;
         else if(n==0 || (errno!=EAGAIN && errno!=EWOULDBLOCK)){
             if(n<0)tcp_errno=errno;
@@ -129,7 +138,7 @@ static void tcp_tick(void) {
             tcp_attempt_frame=lan_frames;return;
         }
         if(lan_frames%120==1){
-            n=send(tcp_fd,"PS2TCP/1",8,MSG_DONTWAIT);
+            n=send(tcp_fd,"PS2TCP/1",8,MSG_DONTWAIT);tcp_last_send=n;
             if(n>0)tcp_tx+=(unsigned int)n;
             else if(n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK)tcp_errno=errno;
         }
@@ -534,10 +543,24 @@ static void draw(void) {
         label(34*sx,365*sy,1.02f*sx,muted,line);
         sprintf(line,"TCP:%d ERR:%d TX/RX:%u/%u TRY:%u",tcp_state,tcp_errno,tcp_tx,tcp_rx,tcp_tries);
         label(34*sx,385*sy,0.95f*sx,muted,line);
+        /* Keep the existing counter page and expose socket diagnostics
+         * on the ABOUT page to avoid overcrowding the PS2 display. */
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
         label(34*sx,166*sy,1.6f*sx,muted,"CONTROLLER MENU: ACTIVE");
         label(34*sx,200*sy,1.6f*sx,muted,"LAN DISCOVERY: EXPERIMENTAL");
+        sprintf(line,"TCP TARGET: %u.%u.%u.%u:%d",(tcp_target_ip>>24)&255,(tcp_target_ip>>16)&255,(tcp_target_ip>>8)&255,tcp_target_ip&255,TCP_TEST_PORT);
+        label(34*sx,230*sy,1.2f*sx,muted,line);
+        sprintf(line,"GATEWAY: %u.%u.%u.%u",(tcp_gateway_ip>>24)&255,(tcp_gateway_ip>>16)&255,(tcp_gateway_ip>>8)&255,tcp_gateway_ip&255);
+        label(34*sx,251*sy,1.2f*sx,muted,line);
+        sprintf(line,"CONNECT RC:%d ERR:%d  SELECT:%d",tcp_connect_rc,tcp_connect_errno,tcp_select_rc);
+        label(34*sx,273*sy,1.13f*sx,muted,line);
+        sprintf(line,"SO_RESULT:%d SO_ERROR:%d CONNECTED:%u",tcp_so_result,tcp_so_error,tcp_connected_count);
+        label(34*sx,295*sy,1.08f*sx,muted,line);
+        sprintf(line,"LAST RECV:%d SEND:%d TCP STATE:%d",tcp_last_recv,tcp_last_send,tcp_state);
+        label(34*sx,317*sy,1.12f*sx,muted,line);
+        sprintf(line,"TCP ERROR:%d ATTEMPTS:%u",tcp_errno,tcp_tries);
+        label(34*sx,339*sy,1.12f*sx,muted,line);
     }
     rect(20*sx,405*sy,600*sx,1*sy,COLOR(65,90,115));
     label(34*sx,418*sy,1.35f*sx,muted,"NOT A VALIDATED NETWORK TEST");
