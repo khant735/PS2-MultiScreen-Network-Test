@@ -79,36 +79,47 @@ static unsigned int tcp_target_ip=((unsigned int)TCP_TEST_TARGET_A<<24)|((unsign
 static unsigned int tcp_gateway_ip=0,tcp_netmask_ip=0;
 static int tcp_initialized=0;
 static int relay_handshake_sent=0;
-static unsigned int relay_peer_messages=0;
+static unsigned int relay_peer_messages=0, sync_sequence=0, sync_peer_sequence=0;
+static unsigned int sync_packets_sent=0, sync_packets_received=0, sync_duplicates=0;
+static unsigned int sync_remote_buttons=0, sync_remote_x=0, sync_remote_y=0;
+static unsigned int sync_local_x=160, sync_local_y=120;
+static unsigned int sync_last_frame=0;
 static char relay_last_message[33]="NONE";
-static void tcp_setup(void) {
-    struct sockaddr_in a;
-    int flags;
-    if (0) { /* Relay mode: both PS2 instances are outbound clients. */
-        tcp_listen=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
-        if(tcp_listen<0){tcp_errno=errno;tcp_state=-1;return;}
-        flags=fcntl(tcp_listen,F_GETFL,0);
-        fcntl(tcp_listen,F_SETFL,flags|O_NONBLOCK);
-        memset(&a,0,sizeof(a));a.sin_family=AF_INET;
-        a.sin_port=htons(TCP_TEST_PORT);a.sin_addr.s_addr=htonl(INADDR_ANY);
-        if(bind(tcp_listen,(struct sockaddr*)&a,sizeof(a))<0 || listen(tcp_listen,1)<0)
-            {tcp_errno=errno;tcp_state=-2;return;}
-        tcp_state=1;
-    } else tcp_state=2;
+static char tcp_input[192];
+static int tcp_input_len=0;
+static char tcp_output[128];
+static int tcp_output_len=0,tcp_output_pos=0;
+static int sync_is_newer(unsigned int a,unsigned int b) { return (int)(a-b)>0; }
+static void sync_receive_line(const char *line) {
+    unsigned int seq,x,y,buttons_value;
+    if(sscanf(line,"S1 %u %u %u %x",&seq,&x,&y,&buttons_value)==4) {
+        if(sync_packets_received && !sync_is_newer(seq,sync_peer_sequence)) {
+            sync_duplicates++;
+            return;
+        }
+        sync_peer_sequence=seq;
+        sync_remote_x=x;
+        sync_remote_y=y;
+        sync_remote_buttons=buttons_value;
+        sync_packets_received++;
+        sync_last_frame=lan_frames;
+        strcpy(relay_last_message,"S1 STATE RECEIVED");
+    }
 }
+static void tcp_disconnect(void) {
+    if(tcp_fd>=0)close(tcp_fd);
+    tcp_fd=-1;tcp_state=2;tcp_attempt_frame=lan_frames;
+    relay_handshake_sent=0;tcp_input_len=0;tcp_output_len=0;tcp_output_pos=0;
+}
+static void tcp_setup(void) { tcp_state=2; }
 static void tcp_tick(void) {
     struct sockaddr_in a;
     struct timeval tv;
     fd_set w;
-    char buf[32];
-    int n,flags,e=0;
+    char buf[128];
+    int n,flags,e=0,i;
     socklen_t len;
-    if(tcp_state<0)return;
-    if(tcp_state==1){
-        len=sizeof(a);n=accept(tcp_listen,(struct sockaddr*)&a,&len);
-        if(n>=0){tcp_fd=n;flags=fcntl(n,F_GETFL,0);fcntl(n,F_SETFL,flags|O_NONBLOCK);tcp_state=4;}
-        else if(errno!=EAGAIN && errno!=EWOULDBLOCK)tcp_errno=errno;
-    }else if(tcp_state==2 && (tcp_attempt_frame==0 || lan_frames-tcp_attempt_frame>180)){
+    if(tcp_state==2 && (tcp_attempt_frame==0 || lan_frames-tcp_attempt_frame>180)) {
         tcp_attempt_frame=lan_frames;tcp_tries++;
         tcp_fd=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
         if(tcp_fd<0){tcp_errno=errno;return;}
@@ -116,49 +127,67 @@ static void tcp_tick(void) {
         memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons(TCP_TEST_PORT);
         a.sin_addr.s_addr=htonl(tcp_target_ip);
         n=connect(tcp_fd,(struct sockaddr*)&a,sizeof(a));
-        tcp_connect_rc=n;tcp_connect_errno=(n<0)?errno:0;
+        tcp_connect_rc=n;tcp_connect_errno=n<0?errno:0;
         if(n==0){tcp_state=4;tcp_connected_count++;relay_handshake_sent=0;}
         else if(errno==EINPROGRESS || errno==EWOULDBLOCK)tcp_state=3;
-        else{tcp_errno=errno;close(tcp_fd);tcp_fd=-1;}
-    }else if(tcp_state==3){
+        else {tcp_errno=errno;tcp_disconnect();}
+    } else if(tcp_state==3) {
         FD_ZERO(&w);FD_SET(tcp_fd,&w);tv.tv_sec=0;tv.tv_usec=0;
         n=select(tcp_fd+1,NULL,&w,NULL,&tv);tcp_select_rc=n;
-        if(n>0){
-            len=sizeof(e);
-            tcp_so_result=getsockopt(tcp_fd,SOL_SOCKET,SO_ERROR,&e,&len);
+        if(n>0) {
+            len=sizeof(e);tcp_so_result=getsockopt(tcp_fd,SOL_SOCKET,SO_ERROR,&e,&len);
             tcp_so_error=e;
             if(tcp_so_result==0 && !e){tcp_state=4;tcp_connected_count++;relay_handshake_sent=0;}
-            else{tcp_errno=e?e:errno;close(tcp_fd);tcp_fd=-1;relay_handshake_sent=0;tcp_state=2;}
-        }else if(n<0 || lan_frames-tcp_attempt_frame>120){
-            tcp_errno=n<0?errno:ETIMEDOUT;close(tcp_fd);tcp_fd=-1;tcp_state=2;
+            else{tcp_errno=e?e:errno;tcp_disconnect();}
+        } else if(n<0 || lan_frames-tcp_attempt_frame>120) {
+            tcp_errno=n<0?errno:ETIMEDOUT;tcp_disconnect();
         }
-    }else if(tcp_state==4){
+    } else if(tcp_state==4) {
         n=recv(tcp_fd,buf,sizeof(buf),MSG_DONTWAIT);tcp_last_recv=n;
-        if(n>0){
-            int j;
+        if(n>0) {
             tcp_rx+=(unsigned int)n;
-            if(n>32)n=32;
-            for(j=0;j<n;j++)relay_last_message[j]=(buf[j]>=32 && buf[j]<127)?buf[j]:'?';
-            relay_last_message[n]=0;
-            relay_peer_messages++;
-        }
-        else if(n==0 || (errno!=EAGAIN && errno!=EWOULDBLOCK)){
-            if(n<0)tcp_errno=errno;
-            close(tcp_fd);tcp_fd=-1;tcp_state=2;
-            tcp_attempt_frame=lan_frames;return;
-        }
-        if(lan_frames%120==1){
-            {
-                const char *message=!relay_handshake_sent ? (lan_profile==1?"PS2HOST/1\\n":lan_profile==2?"PS2CLIENT/1\\n":"PS2AUTO/1\\n") : (lan_profile==1?"HOST-PING\\n":lan_profile==2?"CLIENT-PING\\n":"AUTO-PING\\n");
-                n=send(tcp_fd,message,strlen(message),MSG_DONTWAIT);
+            for(i=0;i<n;i++) {
+                char c=buf[i];
+                if(c=='\\n') {
+                    tcp_input[tcp_input_len]=0;
+                    sync_receive_line(tcp_input);
+                    tcp_input_len=0;relay_peer_messages++;
+                } else if(tcp_input_len<(int)sizeof(tcp_input)-1) {
+                    tcp_input[tcp_input_len++]=c;
+                } else tcp_input_len=0;
             }
+        } else if(n==0 || (errno!=EAGAIN && errno!=EWOULDBLOCK)) {
+            if(n<0)tcp_errno=errno;
+            tcp_disconnect();return;
+        }
+        if(tcp_output_len==0) {
+            if(!relay_handshake_sent) {
+                const char *role=lan_profile==1?"PS2HOST/1\\n":lan_profile==2?"PS2CLIENT/1\\n":"PS2AUTO/1\\n";
+                tcp_output_len=(int)strlen(role);
+                memcpy(tcp_output,role,tcp_output_len);
+            } else if(lan_frames%6==1) {
+                sync_sequence++;
+                tcp_output_len=sprintf(tcp_output,"S1 %u %u %u %04X\\n",
+                    sync_sequence,sync_local_x,sync_local_y,(unsigned int)(~previous_buttons)&0xffff);
+            }
+            tcp_output_pos=0;
+        }
+        if(tcp_output_len>tcp_output_pos) {
+            n=send(tcp_fd,tcp_output+tcp_output_pos,tcp_output_len-tcp_output_pos,MSG_DONTWAIT);
             tcp_last_send=n;
-            if(n>0){tcp_tx+=(unsigned int)n;relay_handshake_sent=1;}
-            else if(n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK)tcp_errno=errno;
+            if(n>0) {
+                tcp_tx+=(unsigned int)n;tcp_output_pos+=n;
+                if(tcp_output_pos==tcp_output_len) {
+                    if(!relay_handshake_sent)relay_handshake_sent=1;
+                    else sync_packets_sent++;
+                    tcp_output_len=0;tcp_output_pos=0;
+                }
+            } else if(n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK) {
+                tcp_errno=errno;tcp_disconnect();
+            }
         }
     }
 }
-
 static void lan_start(void) {
     struct ip4_addr ip, nm, gw;
     struct sockaddr_in addr;
@@ -247,6 +276,10 @@ static void lan_tick(void) {
         }
     }
     ++lan_frames;
+    if((~previous_buttons)&PAD_LEFT && sync_local_x>2)sync_local_x-=2;
+    if((~previous_buttons)&PAD_RIGHT && sync_local_x<638)sync_local_x+=2;
+    if((~previous_buttons)&PAD_UP && sync_local_y>2)sync_local_y-=2;
+    if((~previous_buttons)&PAD_DOWN && sync_local_y<478)sync_local_y+=2;
     if(!tcp_initialized){tcp_setup();tcp_initialized=1;}
     tcp_tick();
     if ((lan_frames % 120) == 1) {
