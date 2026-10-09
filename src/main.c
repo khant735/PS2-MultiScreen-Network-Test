@@ -168,7 +168,11 @@ static void lan_start(void) {
             if (lan_profile != 0) {
                 cfg.ipaddr.s_addr = htonl((192U<<24) | (168U<<16) | (50U<<8) | (100U + (unsigned int)lan_profile));
                 cfg.netmask.s_addr = htonl(0xFFFFFF00U);
-                cfg.gw.s_addr = 0;
+                /* The diagnostic TCP target is outside 192.168.50.0/24.
+                 * Route through PCSX2's emulated gateway instead of 0.0.0.0.
+                 * PCSX2 Sockets typically provides 192.0.2.1 as gateway,
+                 * but that address must be verified in emulator settings. */
+                cfg.gw.s_addr = htonl((192U<<24)|(168U<<16)|(50U<<8)|1U);
             }
             lan_config_error = ps2ip_setconfig(&cfg);
         } else lan_config_error = -1;
