@@ -89,6 +89,7 @@ static char tcp_input[192];
 static int tcp_input_len=0;
 static char tcp_output[128];
 static int tcp_output_len=0,tcp_output_pos=0;
+static unsigned int sync_local_buttons=0;
 static int sync_is_newer(unsigned int a,unsigned int b) { return (int)(a-b)>0; }
 static void sync_receive_line(const char *line) {
     unsigned int seq,x,y,buttons_value;
@@ -168,7 +169,7 @@ static void tcp_tick(void) {
             } else if(lan_frames%6==1) {
                 sync_sequence++;
                 tcp_output_len=sprintf(tcp_output,"S1 %u %u %u %04X\\n",
-                    sync_sequence,sync_local_x,sync_local_y,(unsigned int)(~previous_buttons)&0xffff);
+                    sync_sequence,sync_local_x,sync_local_y,sync_local_buttons);
             }
             tcp_output_pos=0;
         }
@@ -276,6 +277,7 @@ static void lan_tick(void) {
         }
     }
     ++lan_frames;
+    sync_local_buttons=(unsigned int)(~previous_buttons)&0xffff;
     if((~previous_buttons)&PAD_LEFT && sync_local_x>2)sync_local_x-=2;
     if((~previous_buttons)&PAD_RIGHT && sync_local_x<638)sync_local_x+=2;
     if((~previous_buttons)&PAD_UP && sync_local_y>2)sync_local_y-=2;
