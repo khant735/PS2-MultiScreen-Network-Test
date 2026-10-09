@@ -78,10 +78,12 @@ static unsigned int tcp_connected_count=0;
 static unsigned int tcp_target_ip=((unsigned int)TCP_TEST_TARGET_A<<24)|((unsigned int)TCP_TEST_TARGET_B<<16)|((unsigned int)TCP_TEST_TARGET_C<<8)|(unsigned int)TCP_TEST_TARGET_D;
 static unsigned int tcp_gateway_ip=0,tcp_netmask_ip=0;
 static int tcp_initialized=0;
+static unsigned int relay_peer_messages=0;
+static char relay_last_message[33]="NONE";
 static void tcp_setup(void) {
     struct sockaddr_in a;
     int flags;
-    if (lan_profile==1) {
+    if (0) { /* Relay mode: both PS2 instances are outbound clients. */
         tcp_listen=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
         if(tcp_listen<0){tcp_errno=errno;tcp_state=-1;return;}
         flags=fcntl(tcp_listen,F_GETFL,0);
@@ -131,14 +133,25 @@ static void tcp_tick(void) {
         }
     }else if(tcp_state==4){
         n=recv(tcp_fd,buf,sizeof(buf),MSG_DONTWAIT);tcp_last_recv=n;
-        if(n>0)tcp_rx+=(unsigned int)n;
+        if(n>0){
+            int j;
+            tcp_rx+=(unsigned int)n;
+            if(n>32)n=32;
+            for(j=0;j<n;j++)relay_last_message[j]=(buf[j]>=32 && buf[j]<127)?buf[j]:'?';
+            relay_last_message[n]=0;
+            relay_peer_messages++;
+        }
         else if(n==0 || (errno!=EAGAIN && errno!=EWOULDBLOCK)){
             if(n<0)tcp_errno=errno;
-            close(tcp_fd);tcp_fd=-1;tcp_state=lan_profile==1?1:2;
+            close(tcp_fd);tcp_fd=-1;tcp_state=2;
             tcp_attempt_frame=lan_frames;return;
         }
         if(lan_frames%120==1){
-            n=send(tcp_fd,"PS2TCP/1",8,MSG_DONTWAIT);tcp_last_send=n;
+            {
+                const char *message=lan_profile==1?"PS2HOST/1\\n":lan_profile==2?"PS2CLIENT/1\\n":"PS2AUTO/1\\n";
+                n=send(tcp_fd,message,strlen(message),MSG_DONTWAIT);
+            }
+            tcp_last_send=n;
             if(n>0)tcp_tx+=(unsigned int)n;
             else if(n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK)tcp_errno=errno;
         }
@@ -173,13 +186,13 @@ static void lan_start(void) {
     {
         t_ip_info cfg;
         if (ps2ip_getconfig("sm0", &cfg) >= 0) {
-            cfg.dhcp_enabled = (lan_profile == 0);
-            if (lan_profile == 0) {
+            cfg.dhcp_enabled = 1;
+            if (1) {
                 cfg.ipaddr.s_addr=0;
                 cfg.netmask.s_addr=0;
                 cfg.gw.s_addr=0;
             }
-            if (lan_profile != 0) {
+            if (0) {
                 cfg.ipaddr.s_addr = htonl((192U<<24) | (168U<<16) | (50U<<8) | (100U + (unsigned int)lan_profile));
                 cfg.netmask.s_addr = htonl(0xFFFFFF00U);
                 /* The diagnostic TCP target is outside 192.168.50.0/24.
@@ -223,7 +236,7 @@ static void lan_tick(void) {
         tcp_gateway_ip=ntohl(cfg.gw.s_addr);
         tcp_netmask_ip=ntohl(cfg.netmask.s_addr);
         if (cfg.ipaddr.s_addr == 0 ||
-            (lan_profile == 0 && (!cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND))) {
+            (!cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND)) {
             strcpy(local_address, "DHCP PENDING");
             return;
         }
@@ -571,6 +584,8 @@ static void draw(void) {
         label(34*sx,317*sy,1.12f*sx,muted,line);
         sprintf(line,"TCP ERROR:%d ATTEMPTS:%u",tcp_errno,tcp_tries);
         label(34*sx,339*sy,1.12f*sx,muted,line);
+        sprintf(line,"RELAY RX MSG:%u LAST:%s",relay_peer_messages,relay_last_message);
+        label(34*sx,386*sy,1.02f*sx,muted,line);
     }
     rect(20*sx,405*sy,600*sx,1*sy,COLOR(65,90,115));
     label(34*sx,418*sy,1.35f*sx,muted,"NOT A VALIDATED NETWORK TEST");
