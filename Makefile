@@ -1,9 +1,9 @@
 EE_BIN = build/PS2-MultiScreen.ELF
 EE_OBJS = build/main.o build/DEV9_irx.o build/NETMAN_irx.o build/SMAP_irx.o
 EE_LIBS = -lnetman -lps2ip -lpad -lgskit -ldmakit -lpatches -ldebug
-EE_INCS = -I$(GSKIT)/ee/gs/include -I$(GSKIT)/ee/dma/include
+EE_INCS = -I$(GSKIT)/include
 EE_CFLAGS = -Wall -O2
-EE_LDFLAGS = -L$(GSKIT)/build -L$(GSKIT)/lib -L$(PS2SDK)/ports/lib
+EE_LDFLAGS = -L$(GSKIT)/lib -L$(GSKIT)/build -L$(PS2SDK)/ports/lib
 all: $(EE_BIN)
 
 build:

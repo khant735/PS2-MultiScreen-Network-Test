@@ -37,6 +37,7 @@ static int dev9_module_result = -999;
 static int xdev9_module_result = -999;
 static int xdev9serv_module_result = -999;
 static int dev9_probe_attempted = 0;
+static int net_init_attempted = 0;
 static char bios_romver[17] = "UNAVAILABLE";
 static const char *family_estimate = "UNKNOWN";
 static char rom_region = '-';
@@ -58,24 +59,23 @@ static char local_address[24] = "DHCP PENDING";
 static int lan_link = -1, lan_dhcp_status = -1, lan_config_error = 0;
 /* Select before starting LAN: 0 DHCP, 1 static PS2 #1, 2 static PS2 #2. */
 static int lan_profile = 0, lan_send_error = 0;
+static int lan_started_profile = -1, lan_start_count = 0, lan_init_stage = 0, lan_getconfig_rc = 0;
+static int lan_poll_getconfig_rc = -999, lan_poll_count = 0, lan_ready = 0;
+static int lan_cfg_dhcp_enabled = -1, lan_cfg_ip_zero = -1;
+static int mod_dev9_rc=-999, mod_netman_rc=-999, mod_smap_rc=-999, netman_init_rc=-999, ps2ip_init_rc=-999;
 static unsigned int lan_bcast_tx = 0, lan_ucast_tx = 0, lan_bcast_rx = 0, lan_ucast_rx = 0;
 static unsigned int lan_bcast_fail = 0, lan_ucast_fail = 0;
 
 #define TCP_TEST_PORT 39513
-/* Diagnostic destination: set to host Linux address for Sockets-backend test. */
-#ifndef TCP_TEST_TARGET_A
-#define TCP_TEST_TARGET_A 172
-#define TCP_TEST_TARGET_B 26
-#define TCP_TEST_TARGET_C 39
-#define TCP_TEST_TARGET_D 212
-#endif
-static int tcp_fd=-1, tcp_listen=-1, tcp_state=0, tcp_errno=0;
+/* Peer-to-peer TCP destination follows the selected static LAN profile. */
+static int tcp_fd=-1, tcp_listen_fd=-1, tcp_state=0, tcp_errno=0;
+static unsigned int tcp_accept_count=0, tcp_listen_fail=0;
 static unsigned int tcp_tx=0,tcp_rx=0,tcp_tries=0,tcp_attempt_frame=0;
 /* Socket diagnostics retained across retries for on-screen inspection. */
 static int tcp_connect_rc=0,tcp_connect_errno=0,tcp_select_rc=0;
 static int tcp_so_error=0,tcp_so_result=0,tcp_last_recv=0,tcp_last_send=0;
 static unsigned int tcp_connected_count=0;
-static unsigned int tcp_target_ip=((unsigned int)TCP_TEST_TARGET_A<<24)|((unsigned int)TCP_TEST_TARGET_B<<16)|((unsigned int)TCP_TEST_TARGET_C<<8)|(unsigned int)TCP_TEST_TARGET_D;
+static unsigned int tcp_target_ip=0;
 static unsigned int tcp_gateway_ip=0,tcp_netmask_ip=0;
 static int tcp_initialized=0;
 static int relay_handshake_sent=0;
@@ -109,10 +109,51 @@ static void sync_receive_line(const char *line) {
 }
 static void tcp_disconnect(void) {
     if(tcp_fd>=0)close(tcp_fd);
-    tcp_fd=-1;tcp_state=2;tcp_attempt_frame=lan_frames;
+    tcp_fd=-1;tcp_state=(lan_profile==1?5:2);tcp_attempt_frame=lan_frames;
     relay_handshake_sent=0;tcp_input_len=0;tcp_output_len=0;tcp_output_pos=0;
 }
-static void tcp_setup(void) { tcp_state=2; }
+static void tcp_setup(void) {
+    if (lan_profile == 1 || lan_profile == 2) {
+        tcp_target_ip=(192U<<24)|(168U<<16)|(50U<<8)|(lan_profile==1?102U:101U);
+        tcp_state=(lan_profile==1?5:2);
+    } else {
+        /* DHCP has no known peer until discovery completes. */
+        tcp_target_ip=0;
+        tcp_state=0;
+    }
+}
+/* PS2 #1 listens; PS2 #2 connects. One session per pair avoids
+   competing outbound connections and makes both ends symmetric. */
+static void tcp_listen_tick(void) {
+    struct sockaddr_in addr,remote;
+    socklen_t remote_len;
+    int fd,flags,one=1;
+    if(lan_profile!=1 || tcp_state==4)return;
+    if(tcp_listen_fd<0) {
+        if(tcp_attempt_frame && lan_frames-tcp_attempt_frame<180)return;
+        tcp_attempt_frame=lan_frames;
+        fd=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+        if(fd<0){tcp_errno=errno;tcp_listen_fail++;return;}
+        setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));
+        memset(&addr,0,sizeof(addr));
+        addr.sin_family=AF_INET;addr.sin_port=htons(TCP_TEST_PORT);
+        addr.sin_addr.s_addr=htonl(INADDR_ANY);
+        if(bind(fd,(struct sockaddr*)&addr,sizeof(addr))<0 || listen(fd,1)<0) {
+            tcp_errno=errno;tcp_listen_fail++;close(fd);return;
+        }
+        flags=fcntl(fd,F_GETFL,0);
+        if(flags>=0)fcntl(fd,F_SETFL,flags|O_NONBLOCK);
+        tcp_listen_fd=fd;tcp_state=5;
+    }
+    remote_len=sizeof(remote);
+    fd=accept(tcp_listen_fd,(struct sockaddr*)&remote,&remote_len);
+    if(fd>=0) {
+        flags=fcntl(fd,F_GETFL,0);
+        if(flags>=0)fcntl(fd,F_SETFL,flags|O_NONBLOCK);
+        tcp_fd=fd;tcp_state=4;tcp_connected_count++;tcp_accept_count++;
+        relay_handshake_sent=0;tcp_input_len=0;tcp_output_len=0;tcp_output_pos=0;
+    } else if(errno!=EAGAIN && errno!=EWOULDBLOCK)tcp_errno=errno;
+}
 static void tcp_tick(void) {
     struct sockaddr_in a;
     struct timeval tv;
@@ -120,6 +161,7 @@ static void tcp_tick(void) {
     char buf[128];
     int n,flags,e=0,i;
     socklen_t len;
+    if(lan_profile==1 && tcp_state!=4) {tcp_listen_tick();return;}
     if(tcp_state==2 && (tcp_attempt_frame==0 || lan_frames-tcp_attempt_frame>180)) {
         tcp_attempt_frame=lan_frames;tcp_tries++;
         tcp_fd=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
@@ -149,7 +191,7 @@ static void tcp_tick(void) {
             tcp_rx+=(unsigned int)n;
             for(i=0;i<n;i++) {
                 char c=buf[i];
-                if(c=='\\n') {
+                if(c=='\n') {
                     tcp_input[tcp_input_len]=0;
                     sync_receive_line(tcp_input);
                     tcp_input_len=0;relay_peer_messages++;
@@ -194,6 +236,12 @@ static void lan_start(void) {
     struct sockaddr_in addr;
     int one = 1, rc;
     if (lan_state) return;
+    net_init_attempted = 1;
+    lan_started_profile = lan_profile;
+    lan_start_count++;
+    lan_init_stage = 1;
+    lan_ready = 0; lan_poll_count = 0; lan_poll_getconfig_rc = -999;
+    lan_cfg_dhcp_enabled = -1; lan_cfg_ip_zero = -1;
     lan_state = 1;
     /* Session token distinguishes instances even behind virtual NAT. */
     lan_nonce = (unsigned int)clock() ^ (unsigned int)(unsigned long)&lan_nonce;
@@ -201,40 +249,29 @@ static void lan_start(void) {
     SifLoadFileInit();
     SifInitIopHeap();
     sbv_patch_enable_lmb();
-    rc = SifExecModuleBuffer(DEV9_irx, size_DEV9_irx, 0, NULL, NULL);
+    rc = SifExecModuleBuffer(DEV9_irx, size_DEV9_irx, 0, NULL, NULL); mod_dev9_rc = rc;
     if (rc < 0) { lan_error = rc; lan_state = -1; return; }
-    rc = SifExecModuleBuffer(NETMAN_irx, size_NETMAN_irx, 0, NULL, NULL);
+    lan_init_stage = 2;
+    rc = SifExecModuleBuffer(NETMAN_irx, size_NETMAN_irx, 0, NULL, NULL); mod_netman_rc = rc;
     if (rc < 0) { lan_error = rc; lan_state = -2; return; }
-    rc = SifExecModuleBuffer(SMAP_irx, size_SMAP_irx, 0, NULL, NULL);
+    lan_init_stage = 3;
+    rc = SifExecModuleBuffer(SMAP_irx, size_SMAP_irx, 0, NULL, NULL); mod_smap_rc = rc;
     if (rc < 0) { lan_error = rc; lan_state = -3; return; }
-    rc = NetManInit();
+    lan_init_stage = 4;
+    rc = NetManInit(); netman_init_rc = rc;
     if (rc < 0) { lan_error = rc; lan_state = -4; return; }
     IP4_ADDR(&ip, 0,0,0,0);
     IP4_ADDR(&nm, 0,0,0,0);
     IP4_ADDR(&gw, 0,0,0,0);
-    rc = ps2ipInit(&ip, &nm, &gw);
+    lan_init_stage = 5;
+    rc = ps2ipInit(&ip, &nm, &gw); ps2ip_init_rc = rc;
     if (rc < 0) { lan_error = rc; lan_state = -7; return; }
-    {
-        t_ip_info cfg;
-        if (ps2ip_getconfig("sm0", &cfg) >= 0) {
-            cfg.dhcp_enabled = 1;
-            if (1) {
-                cfg.ipaddr.s_addr=0;
-                cfg.netmask.s_addr=0;
-                cfg.gw.s_addr=0;
-            }
-            if (0) {
-                cfg.ipaddr.s_addr = htonl((192U<<24) | (168U<<16) | (50U<<8) | (100U + (unsigned int)lan_profile));
-                cfg.netmask.s_addr = htonl(0xFFFFFF00U);
-                /* The diagnostic TCP target is outside 192.168.50.0/24.
-                 * Route through PCSX2's emulated gateway instead of 0.0.0.0.
-                 * PCSX2 Sockets typically provides 192.0.2.1 as gateway,
-                 * but that address must be verified in emulator settings. */
-                cfg.gw.s_addr = htonl((192U<<24)|(168U<<16)|(50U<<8)|1U);
-            }
-            lan_config_error = ps2ip_setconfig(&cfg);
-        } else lan_config_error = -1;
-    }
+    lan_init_stage = 6;
+    /* SMAP registration can lag behind ps2ipInit. Defer configuration
+       until sm0 is visible; never treat socket creation as IP readiness. */
+    lan_getconfig_rc = -1;
+    lan_config_error = -1;
+    lan_init_stage = 7;
     lan_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (lan_socket < 0) { lan_error = lan_socket; lan_state = -5; return; }
     setsockopt(lan_socket, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
@@ -245,6 +282,7 @@ static void lan_start(void) {
     if (bind(lan_socket, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         lan_state = -6; lan_error = -6; return;
     }
+    lan_init_stage = 8;
     lan_state = 2;
     /* Wait until IP configuration is available before starting TCP. */
 }
@@ -258,17 +296,50 @@ static void lan_tick(void) {
     lan_link = NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0);
     {
         t_ip_info cfg;
-        if (ps2ip_getconfig("sm0", &cfg) < 0) {
+        lan_poll_count++;
+        lan_poll_getconfig_rc = ps2ip_getconfig("sm0", &cfg);
+        /* Retry initial configuration every 30 ticks until it succeeds.
+           A failed getconfig must not permanently skip static IP setup. */
+        if (lan_config_error != 1 && lan_poll_getconfig_rc >= 0 &&
+            (lan_poll_count == 1 || lan_poll_count % 30 == 0)) {
+            lan_getconfig_rc = lan_poll_getconfig_rc;
+            cfg.dhcp_enabled = (lan_started_profile == 0);
+            if (cfg.dhcp_enabled) {
+                cfg.ipaddr.s_addr = 0;
+                cfg.netmask.s_addr = 0;
+                cfg.gw.s_addr = 0;
+            } else {
+                cfg.ipaddr.s_addr = htonl((192U<<24) | (168U<<16) | (50U<<8) |
+                                          (100U + (unsigned int)lan_started_profile));
+                cfg.netmask.s_addr = htonl(0xFFFFFF00U);
+                cfg.gw.s_addr = 0;
+            }
+            lan_config_error = ps2ip_setconfig(&cfg);
+            if (lan_config_error >= 0) lan_config_error = 1;
+            /* Read back the effective config on the next tick. */
+            lan_ready = 0;
+            return;
+        }
+        if (lan_config_error != 1) {
+            lan_ready = 0;
+            strcpy(local_address, "STATIC IP PENDING");
+            return;
+        }
+        if (lan_poll_getconfig_rc < 0) {
+            lan_ready = 0;
             lan_dhcp_status = -1;
             strcpy(local_address, "CONFIG UNAVAILABLE");
             return;
         }
         lan_dhcp_status = cfg.dhcp_status;
+        lan_cfg_dhcp_enabled = cfg.dhcp_enabled;
+        lan_cfg_ip_zero = (cfg.ipaddr.s_addr == 0);
         tcp_gateway_ip=ntohl(cfg.gw.s_addr);
         tcp_netmask_ip=ntohl(cfg.netmask.s_addr);
         if (cfg.ipaddr.s_addr == 0 ||
-            (!cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND)) {
-            strcpy(local_address, "DHCP PENDING");
+            (cfg.dhcp_enabled && cfg.dhcp_status != DHCP_STATE_BOUND)) {
+            lan_ready = 0;
+            strcpy(local_address, cfg.dhcp_enabled ? "DHCP PENDING" : "STATIC IP PENDING");
             return;
         }
         {
@@ -276,6 +347,7 @@ static void lan_tick(void) {
             sprintf(local_address,"%u.%u.%u.%u",(a>>24)&255,(a>>16)&255,(a>>8)&255,a&255);
         }
     }
+    lan_ready = 1;
     ++lan_frames;
     sync_local_buttons=(unsigned int)(~previous_buttons)&0xffff;
     if((~previous_buttons)&PAD_LEFT && sync_local_x>2)sync_local_x-=2;
@@ -397,15 +469,21 @@ static void probe_network_modules(void) {
     xdev9serv_module_result = SifLoadModule("rom0:XDEV9SERV", 0, NULL);
 }
 
+static volatile unsigned int dbg_poll=0, dbg_readok=0, dbg_edges=0;
+static volatile int dbg_state=-999, dbg_read=-999;
+static volatile unsigned short dbg_raw=0xffff, dbg_pressed=0;
 static unsigned short read_pressed(void) {
     int state = padGetState(PAD_PORT, PAD_SLOT);
+    dbg_poll++; dbg_state=state;
     unsigned short current = 0xffff;
     unsigned short pressed;
     if (!pad_ready || (state != PAD_STATE_STABLE && state != PAD_STATE_FINDCTP1)) return 0;
-    if (padRead(PAD_PORT, PAD_SLOT, &buttons) == 0) return 0;
-    current = buttons.btns;
+    dbg_read=padRead(PAD_PORT, PAD_SLOT, &buttons);
+    if (dbg_read == 0) return 0;
+    dbg_readok++;
+    current = buttons.btns; dbg_raw=current;
     pressed = (unsigned short)(previous_buttons & (unsigned short)~current);
-    previous_buttons = current;
+    previous_buttons = current; dbg_pressed=pressed; if(pressed) dbg_edges++;
     return pressed;
 }
 
@@ -469,7 +547,7 @@ static void label(float x,float y,float scale,u64 color,const char *str) {
     float origin=x;
     for (;*str;++str) {
         const char *found;
-        if (*str=='\\n') {x=origin;y+=9*scale;continue;}
+        if (*str=='\n') {x=origin;y+=9*scale;continue;}
         found=strchr(glyph_chars,(*str>='a'&&*str<='z')?*str-32:*str);
         if(found) {
             i=(int)(found-glyph_chars);
@@ -516,11 +594,11 @@ static void draw_layout(float x,float y,float w,float h) {
         int n=screen_number(l.columns,l.rows,c,r);
         float px=px0+c*(cellw+gap),py=py0+r*(cellh+gap);
         u64 col=n==1?COLOR(22,177,197):COLOR(46,83,121);
-        char number[8];
+        char number[16];
         rect(px,py,cellw,cellh,col);
         if(cellw>=14.0f&&cellh>=12.0f) {
             float scale=cellw>=32.0f?1.7f:1.0f;
-            sprintf(number,"%d",n);
+            snprintf(number,sizeof(number),"%d",n);
             label(px+(cellw-(float)strlen(number)*6.0f*scale)/2.0f,
                   py+(cellh-7.0f*scale)/2.0f,scale,
                   COLOR(255,255,255),number);
@@ -568,7 +646,8 @@ static void draw(void) {
         label(34*sx,312*sy,1.05f*sx,muted,line);
         sprintf(line,"ROM SMAP:%s SPEED:%s",rom_smap==1?"YES":"NO",rom_speed==1?"YES":"NO");
         label(34*sx,334*sy,1.10f*sx,muted,line);
-        label(34*sx,365*sy,1.04f*sx,muted,"HARDWARE / MAC / LINK NOT PROBED");
+        label(34*sx,357*sy,1.00f*sx,muted,"ROM PROBES DO NOT TEST BUNDLED DEV9/NETMAN/SMAP");
+        label(34*sx,378*sy,1.00f*sx,muted,"OPEN DIAGNOSTIC COUNTERS; PRESS X TO INIT LAN");
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
@@ -579,52 +658,83 @@ static void draw(void) {
         label(34*sx,365*sy,1.35f*sx,COLOR(50,210,220),"CYAN: SCREEN 1  -  BOTTOM CENTRE");
         label(34*sx,385*sy,1.35f*sx,muted,"LEFT / RIGHT CHANGE  -  PREVIEW ONLY");
     } else if(page==3) {
-        label(34*sx,112*sy,2.2f*sx,white,"DIAGNOSTIC COUNTERS");
+        label(34*sx,112*sy,2.2f*sx,white,"DIAGNOSTICS 1 / 2");
         sprintf(line,"LAN: %s  ERROR: %d",lan_state==2?"DISCOVERING":lan_state==0?"NOT STARTED":"INITIALIZING / FAILED",lan_error);
-        label(34*sx,150*sy,1.28f*sx,muted,line);
+        label(34*sx,145*sy,1.28f*sx,muted,line);
         sprintf(line,"LOCAL IP: %s",local_address);
-        label(34*sx,177*sy,1.25f*sx,muted,line);
+        label(34*sx,169*sy,1.25f*sx,muted,line);
         sprintf(line,"TX / RX BYTES: %u / %u",lan_tx,lan_rx);
-        label(34*sx,202*sy,1.25f*sx,muted,line);
+        label(34*sx,193*sy,1.25f*sx,muted,line);
         sprintf(line,"PEER: %s",peer_address);
-        label(34*sx,235*sy,1.25f*sx,muted,line);
+        label(34*sx,217*sy,1.25f*sx,muted,line);
         sprintf(line,"LINK: %d DHCP: %d CONFIG: %d",lan_link,lan_dhcp_status,lan_config_error);
-        label(34*sx,269*sy,1.25f*sx,muted,line);
+        label(34*sx,241*sy,1.25f*sx,muted,line);
         sprintf(line,"SESSION: %08X PEER ID: %08X",lan_nonce,peer_nonce);
-        label(34*sx,295*sy,1.05f*sx,muted,line);
+        label(34*sx,265*sy,1.05f*sx,muted,line);
         sprintf(line,"SELF RX: %u  INVALID RX: %u",lan_self_rx,lan_invalid_rx);
-        label(34*sx,319*sy,1.05f*sx,muted,line);
+        label(34*sx,289*sy,1.05f*sx,muted,line);
         sprintf(line,"PROFILE: %s",lan_profile==0?"DHCP":lan_profile==1?"PS2 #1 192.168.50.101":"PS2 #2 192.168.50.102");
-        label(34*sx,343*sy,1.10f*sx,muted,line);
+        label(34*sx,313*sy,1.10f*sx,muted,line);
         sprintf(line,"B TX/RX:%u/%u  U TX/RX:%u/%u",lan_bcast_tx,lan_bcast_rx,lan_ucast_tx,lan_ucast_rx);
-        label(34*sx,365*sy,1.02f*sx,muted,line);
+        label(34*sx,337*sy,1.02f*sx,muted,line);
         sprintf(line,"TCP:%d ERR:%d TX/RX:%u/%u TRY:%u",tcp_state,tcp_errno,tcp_tx,tcp_rx,tcp_tries);
+        label(34*sx,361*sy,0.95f*sx,muted,line);
+        sprintf(line,"INIT:%d STARTS:%d PROFILE:%d SETUPCFG:%d",lan_init_stage,lan_start_count,lan_started_profile,lan_getconfig_rc);
         label(34*sx,385*sy,0.95f*sx,muted,line);
-        /* Keep the existing counter page and expose socket diagnostics
-         * on the ABOUT page to avoid overcrowding the PS2 display. */
+        sprintf(line,"READY:%d POLL:%d CFGRC:%d DHCPEN:%d IPZERO:%d",lan_ready,lan_poll_count,lan_poll_getconfig_rc,lan_cfg_dhcp_enabled,lan_cfg_ip_zero);
+        label(34*sx,409*sy,0.85f*sx,muted,line);
+    } else if(page==5) {
+        label(34*sx,105*sy,2.0f*sx,white,"DIAGNOSTICS 2 / 2");
+        sprintf(line,"DEV9 MODULE RC: %d",mod_dev9_rc);
+        label(34*sx,143*sy,1.30f*sx,muted,line);
+        sprintf(line,"NETMAN MODULE RC: %d",mod_netman_rc);
+        label(34*sx,174*sy,1.30f*sx,muted,line);
+        sprintf(line,"SMAP MODULE RC: %d",mod_smap_rc);
+        label(34*sx,205*sy,1.30f*sx,muted,line);
+        sprintf(line,"NETMAN INIT RC: %d",netman_init_rc);
+        label(34*sx,236*sy,1.30f*sx,muted,line);
+        sprintf(line,"PS2IP INIT RC: %d",ps2ip_init_rc);
+        label(34*sx,267*sy,1.30f*sx,muted,line);
+        sprintf(line,"CONFIG RC: %d  POLL RC: %d",lan_getconfig_rc,lan_poll_getconfig_rc);
+        label(34*sx,298*sy,1.30f*sx,muted,line);
+        sprintf(line,"READY: %d  LINK: %d  STARTS: %d",lan_ready,lan_link,lan_start_count);
+        label(34*sx,329*sy,1.30f*sx,muted,line);
+        sprintf(line,"PROFILE: %d  IP: %s",lan_started_profile,local_address);
+        label(34*sx,360*sy,1.18f*sx,muted,line);
+        label(34*sx,390*sy,1.00f*sx,muted,"LEFT: COUNTERS   TRIANGLE: BACK");
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
         label(34*sx,166*sy,1.6f*sx,muted,"CONTROLLER MENU: ACTIVE");
         label(34*sx,200*sy,1.6f*sx,muted,"LAN DISCOVERY: EXPERIMENTAL");
         sprintf(line,"TCP TARGET: %u.%u.%u.%u:%d",(tcp_target_ip>>24)&255,(tcp_target_ip>>16)&255,(tcp_target_ip>>8)&255,tcp_target_ip&255,TCP_TEST_PORT);
         label(34*sx,230*sy,1.2f*sx,muted,line);
-        sprintf(line,"GATEWAY: %u.%u.%u.%u",(tcp_gateway_ip>>24)&255,(tcp_gateway_ip>>16)&255,(tcp_gateway_ip>>8)&255,tcp_gateway_ip&255);
-        label(34*sx,251*sy,1.2f*sx,muted,line);
-        sprintf(line,"MASK: %u.%u.%u.%u DHCP:%d",(tcp_netmask_ip>>24)&255,(tcp_netmask_ip>>16)&255,(tcp_netmask_ip>>8)&255,tcp_netmask_ip&255,lan_dhcp_status);
-        label(34*sx,365*sy,1.05f*sx,muted,line);
-        sprintf(line,"CONNECT RC:%d ERR:%d  SELECT:%d",tcp_connect_rc,tcp_connect_errno,tcp_select_rc);
-        label(34*sx,273*sy,1.13f*sx,muted,line);
-        sprintf(line,"SO_RESULT:%d SO_ERROR:%d CONNECTED:%u",tcp_so_result,tcp_so_error,tcp_connected_count);
-        label(34*sx,295*sy,1.08f*sx,muted,line);
-        sprintf(line,"LAST RECV:%d SEND:%d TCP STATE:%d",tcp_last_recv,tcp_last_send,tcp_state);
-        label(34*sx,317*sy,1.12f*sx,muted,line);
-        sprintf(line,"TCP ERROR:%d ATTEMPTS:%u",tcp_errno,tcp_tries);
-        label(34*sx,339*sy,1.12f*sx,muted,line);
-        sprintf(line,"RELAY RX MSG:%u LAST:%s",relay_peer_messages,relay_last_message);
-        label(34*sx,386*sy,1.02f*sx,muted,line);
+        sprintf(line,"GATEWAY: %u.%u.%u.%u MASK: %u.%u.%u.%u",(tcp_gateway_ip>>24)&255,(tcp_gateway_ip>>16)&255,(tcp_gateway_ip>>8)&255,tcp_gateway_ip&255,(tcp_netmask_ip>>24)&255,(tcp_netmask_ip>>16)&255,(tcp_netmask_ip>>8)&255,tcp_netmask_ip&255);
+        label(34*sx,253*sy,1.0f*sx,muted,line);
+        sprintf(line,"CONNECT RC:%d ERR:%d SELECT:%d",tcp_connect_rc,tcp_connect_errno,tcp_select_rc);
+        label(34*sx,275*sy,1.08f*sx,muted,line);
+        sprintf(line,"SO RESULT:%d ERROR:%d CONNECTED:%u",tcp_so_result,tcp_so_error,tcp_connected_count);
+        label(34*sx,297*sy,1.03f*sx,muted,line);
+        sprintf(line,"TCP RECV:%d SEND:%d STATE:%d ERR:%d TRY:%u",tcp_last_recv,tcp_last_send,tcp_state,tcp_errno,tcp_tries);
+        label(34*sx,319*sy,1.0f*sx,muted,line);
+        sprintf(line,"UDP SEND RC:%d  BCAST FAIL:%u  UCAST FAIL:%u",lan_send_error,lan_bcast_fail,lan_ucast_fail);
+        label(34*sx,343*sy,1.05f*sx,muted,line);
+        sprintf(line,"UDP BCAST TX/RX:%u/%u  UCAST TX/RX:%u/%u",lan_bcast_tx,lan_bcast_rx,lan_ucast_tx,lan_ucast_rx);
+        label(34*sx,365*sy,1.0f*sx,muted,line);
+        sprintf(line,"DEV9:%d  NETMAN:%d  SMAP:%d",mod_dev9_rc,mod_netman_rc,mod_smap_rc);
+        label(34*sx,366*sy,0.93f*sx,muted,line);
+        sprintf(line,"NET INIT:%d  IP INIT:%d  CFGRC:%d",netman_init_rc,ps2ip_init_rc,lan_poll_getconfig_rc);
+        label(34*sx,387*sy,0.90f*sx,muted,line);
+    }
+    { char dbg[128];
+      rect(0,0,640*sx,68*sy,COLOR(5,15,35));
+      sprintf(dbg,"PAD READY:%d STATE:%d READ:%d PAGE:%d",pad_ready,dbg_state,dbg_read,page);
+      label(8*sx,4*sy,1.0f*sx,white,dbg);
+      sprintf(dbg,"RAW:%04X EDGE:%04X POLLS:%u OK:%u EDGES:%u",dbg_raw,dbg_pressed,dbg_poll,dbg_readok,dbg_edges);
+      label(8*sx,26*sy,0.95f*sx,white,dbg);
+      label(8*sx,48*sy,0.95f*sx,white,"CROSS=4000 SQUARE=8000 (ACTIVE LOW RAW)");
     }
     rect(20*sx,405*sy,600*sx,1*sy,COLOR(65,90,115));
-    label(34*sx,418*sy,1.35f*sx,muted,"NOT A VALIDATED NETWORK TEST");
+    label(34*sx,418*sy,1.12f*sx,muted,page==3?"PAGE 1/2   RIGHT: MODULES   UP/DOWN: PROFILE":page==5?"PAGE 2/2   LEFT: COUNTERS":"CROSS: OPEN   TRIANGLE: BACK");
 }
 
 int main(int argc, char **argv) {
@@ -646,13 +756,15 @@ int main(int argc, char **argv) {
         lan_tick();
         pressed = read_pressed();
         if (pressed & PAD_TRIANGLE) { page = 0; redraw = 1; }
+        if ((pressed & PAD_RIGHT) && page == 3) { page = 5; redraw = 1; }
+        else if ((pressed & PAD_LEFT) && page == 5) { page = 3; redraw = 1; }
         if (page == 0) {
             if (pressed & PAD_DOWN) { selected = (selected + 1) % 4; redraw = 1; }
             if (pressed & PAD_UP) { selected = (selected + 3) % 4; redraw = 1; }
             if (pressed & PAD_CROSS) { page = selected + 1; if(page == 1) probe_network_modules();  redraw = 1; }
         } else if (page == 3 && lan_state == 0) {
-            if (pressed & PAD_RIGHT) lan_profile = (lan_profile + 1) % 3;
-            if (pressed & PAD_LEFT) lan_profile = (lan_profile + 2) % 3;
+            if (pressed & PAD_DOWN) { lan_profile = (lan_profile + 1) % 3; redraw = 1; }
+            if (pressed & PAD_UP) { lan_profile = (lan_profile + 2) % 3; redraw = 1; }
             if (pressed & PAD_CROSS) lan_start();
         } else if (page == 2) {
             if (pressed & PAD_RIGHT) { layout_index = (layout_index + 1) % LAYOUT_COUNT; redraw = 1; }
