@@ -76,11 +76,11 @@ static int tcp_connect_rc=0,tcp_connect_errno=0,tcp_select_rc=0;
 static int tcp_so_error=0,tcp_so_result=0,tcp_last_recv=0,tcp_last_send=0;
 static unsigned int tcp_connected_count=0;
 static unsigned int tcp_target_ip=((unsigned int)TCP_TEST_TARGET_A<<24)|((unsigned int)TCP_TEST_TARGET_B<<16)|((unsigned int)TCP_TEST_TARGET_C<<8)|(unsigned int)TCP_TEST_TARGET_D;
-static unsigned int tcp_gateway_ip=(192U<<24)|(168U<<16)|(50U<<8)|1U;
+static unsigned int tcp_gateway_ip=0,tcp_netmask_ip=0;
+static int tcp_initialized=0;
 static void tcp_setup(void) {
     struct sockaddr_in a;
     int flags;
-    if (!lan_profile) return;
     if (lan_profile==1) {
         tcp_listen=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
         if(tcp_listen<0){tcp_errno=errno;tcp_state=-1;return;}
@@ -100,7 +100,7 @@ static void tcp_tick(void) {
     char buf[32];
     int n,flags,e=0;
     socklen_t len;
-    if(!lan_profile || tcp_state<0)return;
+    if(tcp_state<0)return;
     if(tcp_state==1){
         len=sizeof(a);n=accept(tcp_listen,(struct sockaddr*)&a,&len);
         if(n>=0){tcp_fd=n;flags=fcntl(n,F_GETFL,0);fcntl(n,F_SETFL,flags|O_NONBLOCK);tcp_state=4;}
@@ -174,6 +174,11 @@ static void lan_start(void) {
         t_ip_info cfg;
         if (ps2ip_getconfig("sm0", &cfg) >= 0) {
             cfg.dhcp_enabled = (lan_profile == 0);
+            if (lan_profile == 0) {
+                cfg.ipaddr.s_addr=0;
+                cfg.netmask.s_addr=0;
+                cfg.gw.s_addr=0;
+            }
             if (lan_profile != 0) {
                 cfg.ipaddr.s_addr = htonl((192U<<24) | (168U<<16) | (50U<<8) | (100U + (unsigned int)lan_profile));
                 cfg.netmask.s_addr = htonl(0xFFFFFF00U);
@@ -197,7 +202,7 @@ static void lan_start(void) {
         lan_state = -6; lan_error = -6; return;
     }
     lan_state = 2;
-    tcp_setup();
+    /* Wait until IP configuration is available before starting TCP. */
 }
 static void lan_tick(void) {
     struct sockaddr_in dest, from;
@@ -215,6 +220,8 @@ static void lan_tick(void) {
             return;
         }
         lan_dhcp_status = cfg.dhcp_status;
+        tcp_gateway_ip=ntohl(cfg.gw.s_addr);
+        tcp_netmask_ip=ntohl(cfg.netmask.s_addr);
         if (cfg.ipaddr.s_addr == 0 ||
             (lan_profile == 0 && (!cfg.dhcp_enabled || cfg.dhcp_status != DHCP_STATE_BOUND))) {
             strcpy(local_address, "DHCP PENDING");
@@ -226,6 +233,7 @@ static void lan_tick(void) {
         }
     }
     ++lan_frames;
+    if(!tcp_initialized){tcp_setup();tcp_initialized=1;}
     tcp_tick();
     if ((lan_frames % 120) == 1) {
         memset(&dest, 0, sizeof(dest));
@@ -553,6 +561,8 @@ static void draw(void) {
         label(34*sx,230*sy,1.2f*sx,muted,line);
         sprintf(line,"GATEWAY: %u.%u.%u.%u",(tcp_gateway_ip>>24)&255,(tcp_gateway_ip>>16)&255,(tcp_gateway_ip>>8)&255,tcp_gateway_ip&255);
         label(34*sx,251*sy,1.2f*sx,muted,line);
+        sprintf(line,"MASK: %u.%u.%u.%u DHCP:%d",(tcp_netmask_ip>>24)&255,(tcp_netmask_ip>>16)&255,(tcp_netmask_ip>>8)&255,tcp_netmask_ip&255,lan_dhcp_status);
+        label(34*sx,365*sy,1.05f*sx,muted,line);
         sprintf(line,"CONNECT RC:%d ERR:%d  SELECT:%d",tcp_connect_rc,tcp_connect_errno,tcp_select_rc);
         label(34*sx,273*sy,1.13f*sx,muted,line);
         sprintf(line,"SO_RESULT:%d SO_ERROR:%d CONNECTED:%u",tcp_so_result,tcp_so_error,tcp_connected_count);
