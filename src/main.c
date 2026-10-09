@@ -78,6 +78,7 @@ static unsigned int tcp_connected_count=0;
 static unsigned int tcp_target_ip=((unsigned int)TCP_TEST_TARGET_A<<24)|((unsigned int)TCP_TEST_TARGET_B<<16)|((unsigned int)TCP_TEST_TARGET_C<<8)|(unsigned int)TCP_TEST_TARGET_D;
 static unsigned int tcp_gateway_ip=0,tcp_netmask_ip=0;
 static int tcp_initialized=0;
+static int relay_handshake_sent=0;
 static unsigned int relay_peer_messages=0;
 static char relay_last_message[33]="NONE";
 static void tcp_setup(void) {
@@ -116,7 +117,7 @@ static void tcp_tick(void) {
         a.sin_addr.s_addr=htonl(tcp_target_ip);
         n=connect(tcp_fd,(struct sockaddr*)&a,sizeof(a));
         tcp_connect_rc=n;tcp_connect_errno=(n<0)?errno:0;
-        if(n==0){tcp_state=4;tcp_connected_count++;}
+        if(n==0){tcp_state=4;tcp_connected_count++;relay_handshake_sent=0;}
         else if(errno==EINPROGRESS || errno==EWOULDBLOCK)tcp_state=3;
         else{tcp_errno=errno;close(tcp_fd);tcp_fd=-1;}
     }else if(tcp_state==3){
@@ -126,8 +127,8 @@ static void tcp_tick(void) {
             len=sizeof(e);
             tcp_so_result=getsockopt(tcp_fd,SOL_SOCKET,SO_ERROR,&e,&len);
             tcp_so_error=e;
-            if(tcp_so_result==0 && !e){tcp_state=4;tcp_connected_count++;}
-            else{tcp_errno=e?e:errno;close(tcp_fd);tcp_fd=-1;tcp_state=2;}
+            if(tcp_so_result==0 && !e){tcp_state=4;tcp_connected_count++;relay_handshake_sent=0;}
+            else{tcp_errno=e?e:errno;close(tcp_fd);tcp_fd=-1;relay_handshake_sent=0;tcp_state=2;}
         }else if(n<0 || lan_frames-tcp_attempt_frame>120){
             tcp_errno=n<0?errno:ETIMEDOUT;close(tcp_fd);tcp_fd=-1;tcp_state=2;
         }
@@ -148,11 +149,11 @@ static void tcp_tick(void) {
         }
         if(lan_frames%120==1){
             {
-                const char *message=lan_profile==1?"PS2HOST/1\\n":lan_profile==2?"PS2CLIENT/1\\n":"PS2AUTO/1\\n";
+                const char *message=!relay_handshake_sent ? (lan_profile==1?"PS2HOST/1\n":lan_profile==2?"PS2CLIENT/1\n":"PS2AUTO/1\n") : (lan_profile==1?"HOST-PING\n":lan_profile==2?"CLIENT-PING\n":"AUTO-PING\n");
                 n=send(tcp_fd,message,strlen(message),MSG_DONTWAIT);
             }
             tcp_last_send=n;
-            if(n>0)tcp_tx+=(unsigned int)n;
+            if(n>0){tcp_tx+=(unsigned int)n;relay_handshake_sent=1;}
             else if(n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK)tcp_errno=errno;
         }
     }
