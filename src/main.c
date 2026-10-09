@@ -149,7 +149,7 @@ static void tcp_tick(void) {
         }
         if(lan_frames%120==1){
             {
-                const char *message=!relay_handshake_sent ? (lan_profile==1?"PS2HOST/1\n":lan_profile==2?"PS2CLIENT/1\n":"PS2AUTO/1\n") : (lan_profile==1?"HOST-PING\n":lan_profile==2?"CLIENT-PING\n":"AUTO-PING\n");
+                const char *message=!relay_handshake_sent ? (lan_profile==1?"PS2HOST/1\\n":lan_profile==2?"PS2CLIENT/1\\n":"PS2AUTO/1\\n") : (lan_profile==1?"HOST-PING\\n":lan_profile==2?"CLIENT-PING\\n":"AUTO-PING\\n");
                 n=send(tcp_fd,message,strlen(message),MSG_DONTWAIT);
             }
             tcp_last_send=n;
