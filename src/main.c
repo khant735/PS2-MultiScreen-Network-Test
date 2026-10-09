@@ -62,6 +62,13 @@ static unsigned int lan_bcast_tx = 0, lan_ucast_tx = 0, lan_bcast_rx = 0, lan_uc
 static unsigned int lan_bcast_fail = 0, lan_ucast_fail = 0;
 
 #define TCP_TEST_PORT 39513
+/* Diagnostic destination: set to host Linux address for Sockets-backend test. */
+#ifndef TCP_TEST_TARGET_A
+#define TCP_TEST_TARGET_A 172
+#define TCP_TEST_TARGET_B 26
+#define TCP_TEST_TARGET_C 39
+#define TCP_TEST_TARGET_D 212
+#endif
 static int tcp_fd=-1, tcp_listen=-1, tcp_state=0, tcp_errno=0;
 static unsigned int tcp_tx=0,tcp_rx=0,tcp_tries=0,tcp_attempt_frame=0;
 static void tcp_setup(void) {
@@ -98,7 +105,7 @@ static void tcp_tick(void) {
         if(tcp_fd<0){tcp_errno=errno;return;}
         flags=fcntl(tcp_fd,F_GETFL,0);fcntl(tcp_fd,F_SETFL,flags|O_NONBLOCK);
         memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons(TCP_TEST_PORT);
-        a.sin_addr.s_addr=htonl((192U<<24)|(168U<<16)|(50U<<8)|101U);
+        a.sin_addr.s_addr=htonl(((unsigned int)TCP_TEST_TARGET_A<<24)|((unsigned int)TCP_TEST_TARGET_B<<16)|((unsigned int)TCP_TEST_TARGET_C<<8)|(unsigned int)TCP_TEST_TARGET_D);
         n=connect(tcp_fd,(struct sockaddr*)&a,sizeof(a));
         if(n==0)tcp_state=4;
         else if(errno==EINPROGRESS || errno==EWOULDBLOCK)tcp_state=3;
