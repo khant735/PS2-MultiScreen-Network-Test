@@ -16,6 +16,8 @@
 #include <ps2ip.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <errno.h>
 
 
 #define PAD_PORT 0
@@ -58,6 +60,75 @@ static int lan_link = -1, lan_dhcp_status = -1, lan_config_error = 0;
 static int lan_profile = 0, lan_send_error = 0;
 static unsigned int lan_bcast_tx = 0, lan_ucast_tx = 0, lan_bcast_rx = 0, lan_ucast_rx = 0;
 static unsigned int lan_bcast_fail = 0, lan_ucast_fail = 0;
+
+#define TCP_TEST_PORT 39513
+static int tcp_fd=-1, tcp_listen=-1, tcp_state=0, tcp_errno=0;
+static unsigned int tcp_tx=0,tcp_rx=0,tcp_tries=0,tcp_attempt_frame=0;
+static void tcp_setup(void) {
+    struct sockaddr_in a;
+    int flags;
+    if (!lan_profile) return;
+    if (lan_profile==1) {
+        tcp_listen=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+        if(tcp_listen<0){tcp_errno=errno;tcp_state=-1;return;}
+        flags=fcntl(tcp_listen,F_GETFL,0);
+        fcntl(tcp_listen,F_SETFL,flags|O_NONBLOCK);
+        memset(&a,0,sizeof(a));a.sin_family=AF_INET;
+        a.sin_port=htons(TCP_TEST_PORT);a.sin_addr.s_addr=htonl(INADDR_ANY);
+        if(bind(tcp_listen,(struct sockaddr*)&a,sizeof(a))<0 || listen(tcp_listen,1)<0)
+            {tcp_errno=errno;tcp_state=-2;return;}
+        tcp_state=1;
+    } else tcp_state=2;
+}
+static void tcp_tick(void) {
+    struct sockaddr_in a;
+    struct timeval tv;
+    fd_set w;
+    char buf[32];
+    int n,flags,e=0;
+    socklen_t len;
+    if(!lan_profile || tcp_state<0)return;
+    if(tcp_state==1){
+        len=sizeof(a);n=accept(tcp_listen,(struct sockaddr*)&a,&len);
+        if(n>=0){tcp_fd=n;flags=fcntl(n,F_GETFL,0);fcntl(n,F_SETFL,flags|O_NONBLOCK);tcp_state=4;}
+        else if(errno!=EAGAIN && errno!=EWOULDBLOCK)tcp_errno=errno;
+    }else if(tcp_state==2 && (tcp_attempt_frame==0 || lan_frames-tcp_attempt_frame>180)){
+        tcp_attempt_frame=lan_frames;tcp_tries++;
+        tcp_fd=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
+        if(tcp_fd<0){tcp_errno=errno;return;}
+        flags=fcntl(tcp_fd,F_GETFL,0);fcntl(tcp_fd,F_SETFL,flags|O_NONBLOCK);
+        memset(&a,0,sizeof(a));a.sin_family=AF_INET;a.sin_port=htons(TCP_TEST_PORT);
+        a.sin_addr.s_addr=htonl((192U<<24)|(168U<<16)|(50U<<8)|101U);
+        n=connect(tcp_fd,(struct sockaddr*)&a,sizeof(a));
+        if(n==0)tcp_state=4;
+        else if(errno==EINPROGRESS || errno==EWOULDBLOCK)tcp_state=3;
+        else{tcp_errno=errno;close(tcp_fd);tcp_fd=-1;}
+    }else if(tcp_state==3){
+        FD_ZERO(&w);FD_SET(tcp_fd,&w);tv.tv_sec=0;tv.tv_usec=0;
+        n=select(tcp_fd+1,NULL,&w,NULL,&tv);
+        if(n>0){
+            len=sizeof(e);
+            if(getsockopt(tcp_fd,SOL_SOCKET,SO_ERROR,&e,&len)==0 && !e)tcp_state=4;
+            else{tcp_errno=e?e:errno;close(tcp_fd);tcp_fd=-1;tcp_state=2;}
+        }else if(n<0 || lan_frames-tcp_attempt_frame>120){
+            tcp_errno=n<0?errno:ETIMEDOUT;close(tcp_fd);tcp_fd=-1;tcp_state=2;
+        }
+    }else if(tcp_state==4){
+        n=recv(tcp_fd,buf,sizeof(buf),MSG_DONTWAIT);
+        if(n>0)tcp_rx+=(unsigned int)n;
+        else if(n==0 || (errno!=EAGAIN && errno!=EWOULDBLOCK)){
+            if(n<0)tcp_errno=errno;
+            close(tcp_fd);tcp_fd=-1;tcp_state=lan_profile==1?1:2;
+            tcp_attempt_frame=lan_frames;return;
+        }
+        if(lan_frames%120==1){
+            n=send(tcp_fd,"PS2TCP/1",8,MSG_DONTWAIT);
+            if(n>0)tcp_tx+=(unsigned int)n;
+            else if(n<0 && errno!=EAGAIN && errno!=EWOULDBLOCK)tcp_errno=errno;
+        }
+    }
+}
+
 static void lan_start(void) {
     struct ip4_addr ip, nm, gw;
     struct sockaddr_in addr;
@@ -106,6 +177,7 @@ static void lan_start(void) {
         lan_state = -6; lan_error = -6; return;
     }
     lan_state = 2;
+    tcp_setup();
 }
 static void lan_tick(void) {
     struct sockaddr_in dest, from;
@@ -134,6 +206,7 @@ static void lan_tick(void) {
         }
     }
     ++lan_frames;
+    tcp_tick();
     if ((lan_frames % 120) == 1) {
         memset(&dest, 0, sizeof(dest));
         dest.sin_family = AF_INET;
@@ -448,7 +521,7 @@ static void draw(void) {
         label(34*sx,343*sy,1.10f*sx,muted,line);
         sprintf(line,"B TX/RX:%u/%u  U TX/RX:%u/%u",lan_bcast_tx,lan_bcast_rx,lan_ucast_tx,lan_ucast_rx);
         label(34*sx,365*sy,1.02f*sx,muted,line);
-        sprintf(line,"B FAIL:%u U FAIL:%u LAST SEND:%d",lan_bcast_fail,lan_ucast_fail,lan_send_error);
+        sprintf(line,"TCP:%d ERR:%d TX/RX:%u/%u TRY:%u",tcp_state,tcp_errno,tcp_tx,tcp_rx,tcp_tries);
         label(34*sx,385*sy,0.95f*sx,muted,line);
     } else {
         label(34*sx,112*sy,2.2f*sx,white,"ABOUT / STATUS");
