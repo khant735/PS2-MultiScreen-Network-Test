@@ -14,6 +14,8 @@ Homebrew PlayStation 2 project for exploring multi-screen arrangements and netwo
 **Status:** repository initialization; no tested network diagnostic ELF has been published yet.
 
 Concept:
-https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/7d8183a6-27a7-4170-a8cd-f65cd74c73d9.png
-https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/17cc67c9-02e3-49d8-80e4-2e161e502b6f.png
 
+
+<img width="810" height="540" alt="501B_Card_Presentation" src="[https://github.com/user-attachments/assets/c557b448-56d7-47b5-bfe2-50093eaa031f](https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/17cc67c9-02e3-49d8-80e4-2e161e502b6f.png)" />
+
+<img width="810" height="540" alt="501B_Card_Presentation" src="[https://github.com/user-attachments/assets/c557b448-56d7-47b5-bfe2-50093eaa031f]([https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/17cc67c9-02e3-49d8-80e4-2e161e502b6f.png](https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/7d8183a6-27a7-4170-a8cd-f65cd74c73d9.png))" />
