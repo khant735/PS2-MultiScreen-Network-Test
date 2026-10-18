@@ -15,6 +15,6 @@ Homebrew PlayStation 2 project for exploring multi-screen arrangements and netwo
 
 Concept:
 
-<img width="810" height="540" alt="PS2-MultiScreen-Network-Test1" src="[https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/17cc67c9-02e3-49d8-80e4-2e161e502b6f.png](https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/17cc67c9-02e3-49d8-80e4-2e161e502b6f.png)" />
+<img width="810" height="540" alt="PS2-MultiScreen-Network-Test1" src="17cc67c9-02e3-49d8-80e4-2e161e502b6f.png" />
 
-<img width="810" height="540" alt="PS2-MultiScreen-Network-Test2" src="[https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/17cc67c9-02e3-49d8-80e4-2e161e502b6f.png](https://raw.githubusercontent.com/khant735/PS2-MultiScreen-Network-Test/refs/heads/main/7d8183a6-27a7-4170-a8cd-f65cd74c73d9.png))" />
+<img width="810" height="540" alt="PS2-MultiScreen-Network-Test2" src="7d8183a6-27a7-4170-a8cd-f65cd74c73d9.png" />
