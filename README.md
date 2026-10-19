@@ -47,10 +47,10 @@ Screenshots captured from the PS2 multi-screen network test interface.
 
 ![LAN diagnostics — page 2](./screen-48.png)
 
-### Multi-screen layout preview
+### Input Diagnostics layout preview
 
-![Multi-screen layout preview](./screen-50.png)
+![Input Diagnostics layout preview](./screen-50.png)
 
-### Multi-screen layout preview
+### Input Diagnostics layout preview
 
-![Multi-screen layout preview](./screen-51.png)
+![Input Diagnostics layout preview](./screen-51.png)
