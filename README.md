@@ -31,9 +31,9 @@ Screenshots captured from the PS2 multi-screen network test interface.
 
 ![Network adapter](./screen-10.png)
 
-### Diagnostics and counters
+### Diagnostic Counters
 
-![Diagnostics and counters](./screen-12.png)
+![Diagnostic Counters](./screen-12.png)
 
 ### About & Status
 
