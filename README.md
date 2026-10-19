@@ -51,6 +51,6 @@ Screenshots captured from the PS2 multi-screen network test interface.
 
 ![Screen Layout preview](./screen-50.png)
 
-### Screen Layout preview
+### Screen Layout
 
 ![Screen Layout preview](./screen-51.png)
