@@ -49,7 +49,17 @@ Screenshots captured from the PS2 multi-screen network test interface.
 
 ### Input Diagnostics
 
-![Screen Layout preview](./screen-50.png)
+#### Host
+
+![Input Diagnostics — Host](./screen-50.png)
+
+#### Clients Page 1 (01–16)
+
+![Input Diagnostics — Clients 01–16](./input-diagnostics-clients-01-16.png)
+
+#### Clients Page 2 (17–31)
+
+![Input Diagnostics — Clients 17–31](./input-diagnostics-clients-17-31.png)
 
 ### Screen Layout
 
