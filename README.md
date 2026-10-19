@@ -35,9 +35,9 @@ Screenshots captured from the PS2 multi-screen network test interface.
 
 ![Diagnostics and counters](./screen-12.png)
 
-### About and status
+### About & Status
 
-![About and status](./screen-44.png)
+![About & Status](./screen-44.png)
 
 ### LAN diagnostics — page 1
 
