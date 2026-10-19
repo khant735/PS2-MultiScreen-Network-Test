@@ -41,11 +41,11 @@ Screenshots captured from the PS2 multi-screen network test interface.
 
 ### LAN diagnostics — page 1
 
-![LAN diagnostics — page 1](./screen-47.png)
+![LAN diagnostics — page 1](./screen-48.png)
 
 ### LAN diagnostics — page 2
 
-![LAN diagnostics — page 2](./screen-48.png)
+![LAN diagnostics — page 2](./screen-47.png)
 
 ### Input Diagnostics
 
