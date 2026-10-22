@@ -17,24 +17,14 @@ static SifRpcDataQueue_t rpc_queue;
 static SifRpcServerData_t rpc_server;
 static unsigned char rpc_buffer[64] __attribute__((aligned(16)));
 
-static iop_library_t *find_dev9(void)
-{
-    lc_internals_t *internal = GetLoadcoreInternalData();
-    iop_library_t *p;
-    if (!internal) return NULL;
-    for (p = internal->let_next; p; p = p->prev)
-        if (memcmp(p->name, "dev9", 4) == 0) return p;
-    return NULL;
-}
-
-static void *rpc_dispatch(unsigned int fno, void *data, int size)
+static void *rpc_dispatch(int fno, void *data, int size)
 {
     int result = -1;
     unsigned short words[4] = {0, 0, 0, 0};
-    iop_library_t *lib;
+    struct irx_export_table *lib;
     int (*read_eeprom)(unsigned short *);
     (void)size;
-    if (fno == 1 && (lib = find_dev9()) != NULL) {
+    if (fno == 1 && (lib = (struct irx_export_table *)FindLibrary("dev9", 4)) != NULL) {
         /* Export 9 is SpdGetEthernetID / dev9GetEEPROM in PS2SDK. */
         read_eeprom = (int (*)(unsigned short *))lib->fptrs[9];
         if (read_eeprom) result = read_eeprom(words);
