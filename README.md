@@ -13,6 +13,72 @@ Homebrew PlayStation 2 project for exploring multi-screen arrangements and netwo
 
 **Status:** repository initialization; no tested network diagnostic ELF has been published yet.
 
+## How to use the app
+
+### Getting started
+
+1. Build the PS2 ELF with the PS2DEV/PS2SDK and GSKit toolchain, or use a suitable ELF build from the repository's [Actions](../../actions) or [Releases](../../releases) when available.
+2. Run the ELF on a PS2 with a compatible homebrew ELF launcher, or in PCSX2. For Ethernet testing, enable the emulator's DEV9 network adapter or connect a supported PS2 Ethernet adapter to a network.
+3. The program starts at the **main menu**. Network activity does **not** start automatically: select **Diagnostic Counters** to choose a profile and start LAN diagnostics.
+4. To test communication, run the application on two consoles or emulator instances connected to the same reachable network. An assigned IP address alone does not mean a peer connection has succeeded.
+
+### Current controller controls
+
+These controls are taken from the current `develop` implementation in [`src/main.c`](./src/main.c). They describe implemented input handling rather than planned controls.
+
+| Screen / context | Control | Action |
+| --- | --- | --- |
+| Main menu | **D-pad Up / Down** | Move between the five menu entries |
+| Main menu | **Cross (X)** | Open the selected page |
+| Any page | **Triangle** | Return to the main menu |
+| Screen Layout | **D-pad Left / Right** | Cycle backward / forward through the 62 available layout presets; this is a preview, not an automatic physical display setup |
+| Diagnostic Counters (page 1) | **D-pad Up / Down** | Change LAN profile while networking is stopped or cancelled and no worker is active |
+| Diagnostic Counters (page 1) | **Cross (X)** | Start the selected LAN profile when stopped or cancelled |
+| Diagnostic Counters (page 1) | **Circle (O)** | Request cancellation of the current LAN session |
+| Diagnostic Counters (page 1) | **D-pad Right** | Open diagnostics page 2 (module and TCP initialization details) |
+| Diagnostic Counters (page 2) | **D-pad Left** | Return to diagnostics page 1 |
+| Input Diagnostics | **D-pad Left / Right** | Switch between Host, Clients 01–16 and Clients 17–31 |
+| Network Adapter / About & Status | **Triangle** | Return to the main menu; these are primarily information pages |
+
+**Note:** Input Diagnostics *displays* digital button states, analogue-stick values and pressure readings. The displayed buttons are diagnostic data, not additional menu shortcuts. There are no separately implemented Start, Select, shoulder-button or analogue-stick menu-navigation actions in the current main input dispatch.
+
+### Main menu pages
+
+| Page | What it shows |
+| --- | --- |
+| **Network Adapter** | BIOS module probe results, ROM information, active NETMAN adapter MAC, independently read DEV9 EEPROM MAC, and MAC comparison |
+| **Screen Layout** | Preview of multi-screen arrangements and screen numbering |
+| **Diagnostic Counters** | LAN initialization, IP and peer addresses, traffic counters, network profile and status; page 2 shows lower-level module and TCP diagnostics |
+| **About / Status** | Additional connection details including TCP target, gateway, subnet mask, socket results and packet counters |
+| **Input Diagnostics** | Local controller data and up to 31 client-controller status entries across three tabs |
+
+### LAN profiles
+
+Choose a profile with **Up / Down** on Diagnostic Counters page 1, then press **Cross** to start. The current build starts with **PS2 #1 / Host** selected.
+
+| Profile | Behaviour |
+| --- | --- |
+| **DHCP** | Requests an address from a DHCP server |
+| **PS2 #1 / Host** | Static `192.168.50.101/24` |
+| **PS2 #2 / Client** | Static `192.168.50.102/24` |
+| **AUTO DHCP / Link-local** | Tries DHCP, then attempts a provisional `169.254.x.x/16` fallback derived from the active interface MAC after a polling timeout |
+
+For the two static profiles, use PS2 #1 on one instance and PS2 #2 on the other. The network must support communication between their addresses. **AUTO is experimental:** its link-local fallback currently lacks address-conflict detection, and successful peer communication has not been established merely by selecting it. The EEPROM MAC is diagnostic information, not a substitute for the active Ethernet interface's MAC.
+
+### Connection status colours
+
+On the LAN diagnostics screen, **Local IP** and **Peer** text changes colour based on the current connection state:
+
+- **Red:** no active connection, or connection failed/cancelled.
+- **Orange:** network initialization or connection/peer discovery is underway.
+- **Green:** TCP connection established with a peer and recent peer traffic observed.
+
+The application may show an IP address while still orange or red; an address assignment does not itself prove a successful connection. If no peer is detected, inspect the two consoles' network configuration, link status, subnet, and diagnostic counters.
+
+### Testing notes
+
+PCSX2 tests established that the DEV9 EEPROM MAC is readable when either its HDD or Ethernet emulation is enabled; NETMAN's adapter MAC was available when Ethernet emulation was enabled. The addresses matched across the tested configurations. These are **emulator observations**, not guarantees for every physical PS2 model. The MAC probes are read-only and do not modify the adapter EEPROM.
+
 <h2><strong><ins>Concept:</ins></strong></h2>
 
 <img width="810" height="540" alt="PS2-MultiScreen-Network-Test1" src="17cc67c9-02e3-49d8-80e4-2e161e502b6f.png" />
