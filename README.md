@@ -13,6 +13,82 @@ Homebrew PlayStation 2 project for exploring multi-screen arrangements and netwo
 
 **Status:** repository initialization; no tested network diagnostic ELF has been published yet.
 
+## Compiling from source
+
+The current application source and build system are maintained on the **`develop`** branch. The default `main` branch README describes the project, but for the current networking build you should compile **`develop`**, not assume both branches contain the same files.
+
+### Option 1 — GitHub Actions (no local SDK installation)
+
+1. Open the [GitHub Actions page](https://github.com/khant735/PS2-MultiScreen-Network-Test/actions/workflows/build.yml).
+2. Select **PS2 development build** → **Run workflow** and choose **`develop`**.
+3. Wait for the workflow to finish successfully. A green check means the workflow completed; it does not prove real-console or two-instance networking works.
+4. Download the build artifact from the workflow run, or get the individually downloadable ELF and source ZIP from [Releases](https://github.com/khant735/PS2-MultiScreen-Network-Test/releases). Development releases are named `dev-develop-<run number>`.
+5. Use the **`.ELF`** file to launch the app. The `-SOURCE.zip` contains source code; it is not the executable. Check `SHA256SUMS.txt` or `manifest.json` if you want to verify the downloaded files.
+
+The workflow builds in the `ps2dev/ps2dev:latest` Docker image, clones and compiles GSKit, runs `make`, and packages the result. GitHub Actions artifacts have limited retention, so prefer Releases for long-term preservation.
+
+### Option 2 — Compile locally (Linux or WSL2)
+
+**Prerequisites:** Git, GNU Make, Python 3 with the `zoneinfo` module and Europe/London timezone data, a working PS2DEV/PS2SDK toolchain, and GSKit built for that toolchain. The build needs the EE compiler, IOP compiler, `bin2c`, PS2SDK headers/libraries and the PS2SDK `ps2dev9.irx`, `netman.irx` and `smap.irx` modules.
+
+For a build environment matching GitHub Actions, use Linux with Docker:
+
+```bash
+git clone --branch develop https://github.com/khant735/PS2-MultiScreen-Network-Test.git
+cd PS2-MultiScreen-Network-Test
+
+docker run --rm -v "$PWD:/src" -w /src ps2dev/ps2dev:latest sh -ec '
+  # Ensure make, git and GSKit build dependencies are installed
+  # (the GitHub Actions workflow installs missing packages).
+  export GSKIT=/tmp/gsKit
+  git clone --depth 1 https://github.com/ps2dev/gsKit.git "$GSKIT"
+  make -C "$GSKIT"
+  make
+'
+```
+
+**Important:** The short Docker example assumes the image already contains `git`, `make`, and the GSKit build dependencies. If it does not, use the package-install steps in [`.github/workflows/build.yml`](https://github.com/khant735/PS2-MultiScreen-Network-Test/blob/develop/.github/workflows/build.yml), which is the authoritative reproducible build recipe.
+
+Alternatively, if PS2DEV and GSKit are already installed and configured in your Linux/WSL2 shell:
+
+```bash
+git clone --branch develop https://github.com/khant735/PS2-MultiScreen-Network-Test.git
+cd PS2-MultiScreen-Network-Test
+# Ensure PS2DEV, PS2SDK and GSKIT point to your installed toolchain.
+make
+```
+
+The Makefile first builds the read-only IOP `macprobe.irx`, embeds it and the PS2SDK DEV9/NETMAN/SMAP modules, then links the EE executable. The un-packaged ELF is:
+
+```text
+build/PS2-MultiScreen.ELF
+```
+
+### Package a compiled build
+
+After `make` succeeds, run:
+
+```bash
+python3 scripts/package.py --version 0.1.0
+```
+
+This writes to `dist/`:
+
+- `PS2-MultiScreen-vVERSION-(DD-MM-YYYY)-[hh-mm-ssAM/PM]-XXXXXXXX.ELF`
+- `PS2-MultiScreen-vVERSION-(DD-MM-YYYY)-[hh-mm-ssAM/PM]-XXXXXXXX-SOURCE.zip`
+- `manifest.json` and `SHA256SUMS.txt`
+
+Each `XXXXXXXX` is that file's own CRC32; the timestamp uses UK local time. To rebuild from scratch, run `make clean` followed by `make`. Do not commit or distribute proprietary PS2 BIOS files.
+
+### Troubleshooting compilation
+
+- **`PS2SDK` / `GSKIT` not found:** verify the toolchain environment variables and that GSKit has been compiled.
+- **Missing `ps2dev9.irx`, `netman.irx` or `smap.irx`:** check the installed PS2SDK IOP module directory.
+- **Missing GSKit headers or linker libraries:** build GSKit with the same PS2DEV toolchain used for the app.
+- **`bin2c` or compiler not found:** use a correctly configured PS2DEV environment, or the GitHub Actions workflow.
+- **Packaging fails:** first confirm that `build/PS2-MultiScreen.ELF` exists, and that Python's UK timezone data is available.
+- **Windows:** use WSL2 or Docker with a Linux environment rather than trying to run the GNU/PS2DEV build from a plain Windows Command Prompt.
+
 ## How to use the app
 
 ### Getting started
