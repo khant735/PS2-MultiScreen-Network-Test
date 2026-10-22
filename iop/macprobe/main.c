@@ -17,6 +17,18 @@ static SifRpcDataQueue_t rpc_queue;
 static SifRpcServerData_t rpc_server;
 static unsigned char rpc_buffer[64] __attribute__((aligned(16)));
 
+/* BIOS Drain's loadcore export lookup; FindLibrary is not a PS2SDK API. */
+static iop_library_t *FindLibrary(const char *name, int len)
+{
+    lc_internals_t *internal = GetLoadcoreInternalData();
+    iop_library_t *lib;
+    if (!internal) return NULL;
+    for (lib = internal->let_next; lib != NULL; lib = lib->prev) {
+        if (!memcmp(lib->name, name, len)) return lib;
+    }
+    return NULL;
+}
+
 static void *rpc_dispatch(int fno, void *data, int size)
 {
     int result = -1;
