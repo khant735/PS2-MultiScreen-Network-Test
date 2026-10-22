@@ -1316,7 +1316,21 @@ static void draw(void) {
         } else {
             snprintf(line, sizeof(line), "LOCAL IP: %s",local_address);
         }
-        label(34*sx,169*sy,1.25f*sx,muted,line);
+        /* IP text indicates connection progress, not merely IP assignment.
+         * GREEN requires an established TCP peer and fresh peer traffic.
+         * ORANGE means an active connection attempt or peer discovery.
+         * RED means no active connection (including failed/cancelled states). */
+        {
+            int peer_fresh = peer_last_frame != 0 &&
+                lan_frames - peer_last_frame < 600;
+            int established = lan_state == 2 && tcp_state == 4 && peer_fresh;
+            int connecting = (lan_state == 1 || lan_state == 2) &&
+                (lan_worker_active || lan_ready || lan_link > 0);
+            unsigned long ip_color = established ? COLOR(60,220,100) :
+                                     connecting ? COLOR(255,165,35) :
+                                                  COLOR(235,65,65);
+            label(34*sx,169*sy,1.25f*sx,ip_color,line);
+        }
         if (lan_state == 1 || lan_state == 3 || lan_state == -8 || lan_state == -9 || lan_state == -10) {
             snprintf(line,sizeof(line),"THREAD:%d CR:%d ST:%d HBCR:%d HBST:%d",lan_worker_thread,lan_thread_create_rc,lan_thread_start_rc,heartbeat_create_rc,heartbeat_start_rc);
             label(34*sx,356*sy,0.95f*sx,muted,line);
@@ -1326,7 +1340,17 @@ static void draw(void) {
         sprintf(line,"TX / RX BYTES: %u / %u",lan_tx,lan_rx);
         label(34*sx,193*sy,1.25f*sx,muted,line);
         sprintf(line,"PEER: %s",peer_address);
-        label(34*sx,217*sy,1.25f*sx,muted,line);
+        {
+            int peer_fresh = peer_last_frame != 0 &&
+                lan_frames - peer_last_frame < 600;
+            int established = lan_state == 2 && tcp_state == 4 && peer_fresh;
+            int connecting = (lan_state == 1 || lan_state == 2) &&
+                (lan_worker_active || lan_ready || lan_link > 0);
+            unsigned long peer_color = established ? COLOR(60,220,100) :
+                                       connecting ? COLOR(255,165,35) :
+                                                    COLOR(235,65,65);
+            label(34*sx,217*sy,1.25f*sx,peer_color,line);
+        }
         sprintf(line,"LINK: %d DHCP: %d CONFIG: %d",lan_link,lan_dhcp_status,lan_config_error);
         label(34*sx,241*sy,1.25f*sx,muted,line);
         sprintf(line,"SESSION: %08X PEER ID: %08X",lan_nonce,peer_nonce);
