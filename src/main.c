@@ -336,7 +336,7 @@ static volatile int lan_boot_netman_ready = 0;
 static volatile int lan_boot_ps2ip_ready = 0;
 static volatile int lan_boot_ps2ip_rc = -999;
 static void lan_boot_load_modules(void) {
-    int rc;
+    int rc, mod_start_result = -999;
     B79_TRACE("BOOT MODULES BEFORE PAD ENTER", 0);
     B79_TRACE("SIF LOADFILE ENTER", 0); SifLoadFileInit(); lan_operation_completed = 1; B79_TRACE("SIF LOADFILE RETURN", 0);
     lan_operation_entered = 2;
@@ -347,17 +347,21 @@ static void lan_boot_load_modules(void) {
        rather than printing success unconditionally. Zero means success. */
     if (rc != 0) { lan_boot_modules_error = rc ? rc : -1; B79_TRACE("LMB PATCH FAILED", rc); return; }
     lan_operation_entered = 4;
-    B79_TRACE("DEV9 ENTER", 0); rc = SifExecModuleBuffer(DEV9_irx, size_DEV9_irx, 0, NULL, NULL); B79_TRACE("DEV9 RETURN", rc); mod_dev9_rc = rc; lan_operation_completed = 4;
+    B79_TRACE("DEV9 ENTER", 0); rc = SifExecModuleBuffer(DEV9_irx, size_DEV9_irx, 0, NULL, &mod_start_result); B79_TRACE("DEV9 RETURN", rc); B79_TRACE("DEV9 START RESULT", mod_start_result); mod_dev9_rc = rc; lan_operation_completed = 4;
     if (rc < 0) { lan_boot_modules_error = rc; return; }
+    /* Preserve module-specific start results for diagnosis; some IRX modules
+       legitimately return nonzero status, so do not reject them generically. */
+    mod_start_result = -999;
 
     lan_init_stage = 2;
     lan_operation_entered = 5;
-    B79_TRACE("NETMAN MODULE ENTER", 0); rc = SifExecModuleBuffer(NETMAN_irx, size_NETMAN_irx, 0, NULL, NULL); B79_TRACE("NETMAN MODULE RETURN", rc); mod_netman_rc = rc; lan_operation_completed = 5;
+    B79_TRACE("NETMAN MODULE ENTER", 0); rc = SifExecModuleBuffer(NETMAN_irx, size_NETMAN_irx, 0, NULL, &mod_start_result); B79_TRACE("NETMAN MODULE RETURN", rc); B79_TRACE("NETMAN START RESULT", mod_start_result); mod_netman_rc = rc; lan_operation_completed = 5;
     if (rc < 0) { lan_boot_modules_error = rc; return; }
+    mod_start_result = -999;
 
     lan_init_stage = 3;
     lan_operation_entered = 6;
-    B79_TRACE("SMAP ENTER", 0); rc = SifExecModuleBuffer(SMAP_irx, size_SMAP_irx, 0, NULL, NULL); B79_TRACE("SMAP RETURN", rc); mod_smap_rc = rc; lan_operation_completed = 6;
+    B79_TRACE("SMAP ENTER", 0); rc = SifExecModuleBuffer(SMAP_irx, size_SMAP_irx, 0, NULL, &mod_start_result); B79_TRACE("SMAP RETURN", rc); B79_TRACE("SMAP START RESULT", mod_start_result); mod_smap_rc = rc; lan_operation_completed = 6;
     if (rc < 0) { lan_boot_modules_error = rc; return; }
 
     lan_init_stage = 4;
@@ -544,6 +548,7 @@ static void lan_finish_main(void) {
     lan_operation_entered = 10; B79_TRACE("UDP SETSOCKOPT ENTER", 0);
     rc = setsockopt(lan_socket, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
     lan_operation_completed = 10; B79_TRACE("UDP SETSOCKOPT RETURN", rc);
+    if (rc < 0) { lan_error = errno; lan_state = -5; lan_close_sockets(); return; }
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(DISCOVERY_PORT);
