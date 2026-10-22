@@ -342,7 +342,10 @@ static void lan_boot_load_modules(void) {
     lan_operation_entered = 2;
     B79_TRACE("IOP HEAP ENTER", 0); SifInitIopHeap(); lan_operation_completed = 2; B79_TRACE("IOP HEAP RETURN", 0);
     lan_operation_entered = 3;
-    B79_TRACE("LMB PATCH ENTER", 0); sbv_patch_enable_lmb(); lan_operation_completed = 3; B79_TRACE("LMB PATCH RETURN", 0);
+    B79_TRACE("LMB PATCH ENTER", 0); rc = sbv_patch_enable_lmb(); lan_operation_completed = 3; B79_TRACE("LMB PATCH RETURN", rc);
+    /* Artemis/debug-logger lesson: record the actual LOADFILE patch result,
+       rather than printing success unconditionally. Zero means success. */
+    if (rc != 0) { lan_boot_modules_error = rc ? rc : -1; B79_TRACE("LMB PATCH FAILED", rc); return; }
     lan_operation_entered = 4;
     B79_TRACE("DEV9 ENTER", 0); rc = SifExecModuleBuffer(DEV9_irx, size_DEV9_irx, 0, NULL, NULL); B79_TRACE("DEV9 RETURN", rc); mod_dev9_rc = rc; lan_operation_completed = 4;
     if (rc < 0) { lan_boot_modules_error = rc; return; }
