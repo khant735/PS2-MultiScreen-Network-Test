@@ -1,5 +1,5 @@
 EE_BIN = build/PS2-MultiScreen.ELF
-EE_OBJS = build/main.o build/DEV9_irx.o build/NETMAN_irx.o build/SMAP_irx.o
+EE_OBJS = build/main.o build/DEV9_irx.o build/NETMAN_irx.o build/SMAP_irx.o build/MACPROBE_irx.o
 EE_LIBS = -lnetman -lps2ip -lpad -lgskit -ldmakit -lpatches -ldebug
 EE_INCS = -I$(GSKIT)/include -I$(GSKIT)/ee/gs/include -I$(GSKIT)/ee/dma/include
 EE_CFLAGS = -Wall -O2
@@ -18,6 +18,12 @@ build/DEV9_irx.c: $(PS2SDK)/iop/irx/ps2dev9.irx | build
 build/NETMAN_irx.c: $(PS2SDK)/iop/irx/netman.irx | build
 	bin2c $< $@ NETMAN_irx
 
+iop/macprobe/macprobe.irx: iop/macprobe/main.c iop/macprobe/imports.lst iop/macprobe/irx_imports.h
+	$(MAKE) -C iop/macprobe
+
+build/MACPROBE_irx.c: iop/macprobe/macprobe.irx | build
+	bin2c $< $@ MACPROBE_irx
+
 build/SMAP_irx.c: $(PS2SDK)/iop/irx/smap.irx | build
 	bin2c $< $@ SMAP_irx
 
@@ -26,6 +32,7 @@ build/main.o: src/main.c | build
 
 clean:
 	rm -rf build dist
+	$(MAKE) -C iop/macprobe clean
 
 include $(PS2SDK)/samples/Makefile.pref
 include $(PS2SDK)/samples/Makefile.eeglobal
