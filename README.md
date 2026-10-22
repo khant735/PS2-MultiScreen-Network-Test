@@ -236,13 +236,12 @@ Please refer to the upstream repositories for their authors, contributors, copyr
 | --- | --- |
 | **Gran Turismo 3: A-Spec** (Polyphony Digital / Sony) | PS2 i.LINK multi-screen concepts and the six-display screen-numbering arrangement used as a visual reference. |
 | **Gran Turismo 4** (Polyphony Digital / Sony) | Ethernet LAN and multi-monitor concepts that inspired networked display arrangements. |
-| **Tourist Trophy** (Polyphony Digital / Sony) | Related Polyphony Digital display / multi-screen research reference; not a claim of source-code reuse. |
 | [Open PS2 Loader](https://github.com/ps2homebrew/Open-PS2-Loader) | Reference project studied for practical PS2 networking and DEV9/SMAP architecture. |
 | [PS2Link](https://github.com/ps2dev/ps2link) | Reference project for homebrew communication with a PS2 over Ethernet. |
 | [HDLGameInstaller](https://github.com/ps2homebrew/HDLGameInstaller) | Reference project investigated for PS2 Ethernet / network-adapter initialization and related IOP module interactions. |
 | [PCSX2 documentation and source](https://github.com/PCSX2/pcsx2) | Emulator behavior, configuration, and diagnostic cross-checking during development. |
 
-The game titles above are credited **for inspiration only**: no proprietary Gran Turismo or Tourist Trophy source, assets, BIOS files or game code are included or claimed as dependencies.
+The game titles above are credited **for inspiration only**: no proprietary Gran Turismo source, assets, BIOS files or game code are included or claimed as dependencies.
 
 ### How the sources are used
 
