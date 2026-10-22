@@ -100,6 +100,9 @@ static void read_dev9_eeprom_mac(void)
 
 /* Profiles: 0 DHCP, 1 static host, 2 static client, 3 AUTO. */
 static int lan_profile = 0, lan_send_error = 0;
+/* Role is independent of IP configuration: 0=HOST, 1=CLIENT, 2=AUTO. */
+static int lan_role = 0, lan_started_role = 0, lan_effective_role = 0;
+static unsigned int discovered_peer_ip = 0;
 static int auto_fallback_active = 0;
 static unsigned int auto_linklocal_ip = 0, auto_dhcp_poll_start = 0;
 static int lan_started_profile = -1, lan_start_count = 0, lan_init_stage = 0, lan_getconfig_rc = 0;
@@ -212,13 +215,12 @@ static void tcp_disconnect(void) {
     input_clients[0].valid=0;
 }
 static void tcp_setup(void) {
-    if (lan_profile == 1 || lan_profile == 2) {
-        tcp_target_ip=(192U<<24)|(168U<<16)|(50U<<8)|(lan_profile==1?102U:101U);
-        tcp_state=(lan_profile==1?5:2);
-    } else {
-        /* DHCP has no known peer until discovery completes. */
-        tcp_target_ip=0;
-        tcp_state=0;
+    /* TCP role is independent of DHCP/static address selection. */
+    tcp_target_ip=0;
+    tcp_state=(lan_effective_role==0?5:0);
+    if (lan_effective_role==1 && discovered_peer_ip) {
+        tcp_target_ip=discovered_peer_ip;
+        tcp_state=2;
     }
 }
 /* PS2 #1 listens; PS2 #2 connects. One session per pair avoids
@@ -228,7 +230,7 @@ static void tcp_listen_tick(void) {
     struct sockaddr_in addr,remote;
     socklen_t remote_len;
     int fd,flags,one=1;
-    if(lan_profile!=1 || tcp_state==4)return;
+    if(lan_effective_role!=0 || tcp_state==4)return;
     if(tcp_listen_fd<0) {
         if(tcp_attempt_frame && lan_frames-tcp_attempt_frame<180)return;
         tcp_attempt_frame=lan_frames;
@@ -277,7 +279,7 @@ static void tcp_tick(void) {
     int n,flags,e=0,i;
     socklen_t len;
     if(lan_frames<=10){printf("B82 TCP ENTER frame=%u profile=%d state=%d\n",lan_frames,lan_profile,tcp_state);fflush(stdout);}
-    if(lan_profile==1 && tcp_state!=4) {tcp_listen_tick();return;}
+    if(lan_effective_role==0 && tcp_state!=4) {tcp_listen_tick();return;}
     if(tcp_state==2 && (tcp_attempt_frame==0 || lan_frames-tcp_attempt_frame>180)) {
         tcp_attempt_frame=lan_frames;tcp_tries++;
         tcp_fd=socket(AF_INET,SOCK_STREAM,IPPROTO_TCP);
@@ -324,7 +326,7 @@ static void tcp_tick(void) {
         }
         if(tcp_output_len==0) {
             if(!relay_handshake_sent) {
-                const char *role=lan_profile==1?"PS2HOST/1\n":lan_profile==2?"PS2CLIENT/1\n":"PS2AUTO/1\n";
+                const char *role=lan_effective_role==0?"PS2HOST/1\n":"PS2CLIENT/1\n";
                 tcp_output_len=(int)strlen(role);
                 memcpy(tcp_output,role,tcp_output_len);
             } else if(lan_frames%6==1) {
@@ -469,6 +471,9 @@ static void lan_start_worker(void) {
     net_init_attempted = 1;
     B79_TRACE("START_WORKER INIT ATTEMPT", net_init_attempted);
     lan_started_profile = lan_profile;
+    lan_started_role = lan_role;
+    lan_effective_role = lan_role == 1 ? 1 : 0;
+    discovered_peer_ip = 0;
     auto_fallback_active = 0;
     auto_dhcp_poll_start = 0;
     auto_linklocal_ip = 0;
@@ -823,7 +828,7 @@ static void lan_tick(void) {
     /* B83: Do not let the client-side PS2IP connect() block UDP discovery.
        The client TCP path is gated until a peer HELLO has been received.
        This is a diagnostic workaround, not a permanent TCP connect fix. */
-    if (lan_profile != 2 || peer_last_frame != 0) {
+    if (lan_effective_role == 0 || (discovered_peer_ip && tcp_state != 0)) {
         tcp_tick();
         if (lan_frames <= 10) { printf("B83 TCP TICK DONE frame=%u\n",lan_frames); fflush(stdout); }
     } else if (lan_frames <= 10 || lan_frames % 120 == 1) {
@@ -879,6 +884,24 @@ static void lan_tick(void) {
                     printf("B80 PEER from=%s nonce=%08X frame=%u\n", peer_address, received_nonce, lan_frames);
                 peer_nonce = received_nonce;
                 peer_last_frame = lan_frames;
+                discovered_peer_ip = a;
+                /* Deterministic AUTO election: smaller session token hosts.
+                   Explicit HOST/CLIENT overrides this choice. */
+                if (lan_started_role == 2 && tcp_state != 4) {
+                    int elected = lan_nonce < peer_nonce ? 0 : 1;
+                    if (elected != lan_effective_role) {
+                        if (tcp_fd >= 0) { close(tcp_fd); tcp_fd = -1; }
+                        if (tcp_listen_fd >= 0) { close(tcp_listen_fd); tcp_listen_fd = -1; }
+                        lan_effective_role = elected;
+                        tcp_attempt_frame = 0;
+                        tcp_state = elected == 0 ? 5 : 2;
+                    }
+                }
+                if (lan_effective_role == 1 && tcp_state == 0) {
+                    tcp_target_ip = discovered_peer_ip;
+                    tcp_attempt_frame = 0;
+                    tcp_state = 2;
+                }
                 lan_rx += (unsigned int)n;
                 if (ntohl(from.sin_addr.s_addr) == ((192U<<24)|(168U<<16)|(50U<<8)|(lan_profile==1?102U:101U)) && lan_profile != 0) lan_ucast_rx++;
                 else lan_bcast_rx++;
@@ -889,6 +912,11 @@ static void lan_tick(void) {
         strcpy(peer_address, "NONE");
         peer_last_frame = 0;
         peer_nonce = 0;
+        discovered_peer_ip = 0;
+        if (lan_effective_role == 1 && tcp_state != 4) {
+            if (tcp_fd >= 0) { close(tcp_fd); tcp_fd = -1; }
+            tcp_state = 0;
+        }
     }
 }
 static int rom_file_present(const char *path) {
@@ -1359,6 +1387,8 @@ static void draw(void) {
         label(34*sx,289*sy,1.05f*sx,muted,line);
         sprintf(line,"PROFILE: %s",lan_profile==0?"DHCP":lan_profile==1?"PS2 #1 192.168.50.101":lan_profile==2?"PS2 #2 192.168.50.102":"AUTO DHCP / LINK-LOCAL (PROVISIONAL)");
         label(34*sx,313*sy,1.10f*sx,muted,line);
+        snprintf(line,sizeof(line),"ROLE: %s  ACTIVE: %s",lan_role==0?"HOST":lan_role==1?"CLIENT":"AUTO",lan_effective_role==0?"HOST":"CLIENT");
+        label(34*sx,394*sy,0.95f*sx,muted,line);
         sprintf(line,"B TX/RX:%u/%u  U TX/RX:%u/%u",lan_bcast_tx,lan_bcast_rx,lan_ucast_tx,lan_ucast_rx);
         label(34*sx,337*sy,1.02f*sx,muted,line);
     } else if(page==5) {
@@ -1425,7 +1455,7 @@ static void draw(void) {
       label(8*sx,48*sy,0.85f*sx,white,dbg);
     }
     rect(20*sx,405*sy,600*sx,1*sy,COLOR(65,90,115));
-    label(34*sx,418*sy,1.12f*sx,muted,page==3?"PAGE 1/2   RIGHT: MODULES   UP/DOWN: PROFILE":page==5?"PAGE 2/2   LEFT: COUNTERS":"CROSS: OPEN   TRIANGLE: BACK");
+    label(34*sx,418*sy,1.12f*sx,muted,page==3?"RIGHT: MODULES   UP/DOWN: IP   SQUARE: ROLE":page==5?"PAGE 2/2   LEFT: COUNTERS":"CROSS: OPEN   TRIANGLE: BACK");
 }
 
 int main(int argc, char **argv) {
@@ -1460,7 +1490,8 @@ int main(int argc, char **argv) {
     /* Normal startup: main menu; LAN is started explicitly by the user. */
     page = 0;
     selected = 0;
-    lan_profile = 1; /* Player 1 / Host is the default role, but not auto-started. */
+    lan_profile = 1; /* Preserve existing static IP default. */
+    lan_role = 0; /* Default to explicit host; user may select client or auto. */
     while (running) {
         if (netman_call_pending) ++netman_wait_frames;
         if (lan_worker_thread >= 0 && !lan_worker_exited) {
@@ -1481,6 +1512,7 @@ int main(int argc, char **argv) {
             if (pressed & PAD_CROSS) { page = selected == 4 ? 6 : selected + 1; if(page == 1) probe_network_modules();  redraw = 1; }
         } else if (page == 3) {
             if (pressed & PAD_CIRCLE) { lan_request_cancel(); redraw = 1; }
+            if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_SQUARE)) { lan_role = (lan_role + 1) % 3; redraw = 1; }
             if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_DOWN)) { lan_profile = (lan_profile + 1) % 4; redraw = 1; }
             if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_UP)) { lan_profile = (lan_profile + 3) % 4; redraw = 1; }
             if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_CROSS)) lan_start();
