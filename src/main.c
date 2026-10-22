@@ -1256,15 +1256,22 @@ static void draw(void) {
         else
             snprintf(line,sizeof(line),"ADAPTER MAC: UNAVAILABLE (RC:%d)",lan_mac_rc);
         label(34*sx,350*sy,0.91f*sx,muted,line);
+        /* A readable EEPROM establishes DEV9 access, not Ethernet availability.
+         * Neither a missing NETMAN MAC nor an EEPROM read failure proves that
+         * the emulator's adapter setting is disabled. */
+        snprintf(line,sizeof(line),"DEV9: %s  ETHERNET: %s",
+                 eeprom_mac_valid ? "EEPROM ACCESSIBLE" : "EEPROM UNAVAILABLE",
+                 lan_mac_valid ? "MAC AVAILABLE" : "MAC UNAVAILABLE");
+        label(34*sx,364*sy,0.75f*sx,muted,line);
         if (eeprom_mac_valid)
             snprintf(line,sizeof(line),"DEV9 EEPROM: %02X:%02X:%02X:%02X:%02X:%02X",
                      eeprom_mac[0],eeprom_mac[1],eeprom_mac[2],eeprom_mac[3],eeprom_mac[4],eeprom_mac[5]);
         else snprintf(line,sizeof(line),"DEV9 EEPROM: UNAVAILABLE (RC:%d)",eeprom_mac_rc);
-        label(34*sx,368*sy,0.91f*sx,muted,line);
+        label(34*sx,379*sy,0.82f*sx,muted,line);
         snprintf(line,sizeof(line),"MAC MATCH: %s",
                  !lan_mac_valid || !eeprom_mac_valid ? "UNAVAILABLE" :
                  memcmp(lan_mac,eeprom_mac,6)==0 ? "YES" : "NO");
-        label(34*sx,386*sy,0.91f*sx,muted,line);
+        label(34*sx,393*sy,0.82f*sx,muted,line);
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
