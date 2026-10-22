@@ -98,8 +98,10 @@ static void read_dev9_eeprom_mac(void)
     }
 }
 
-/* Select before starting LAN: 0 DHCP, 1 static PS2 #1, 2 static PS2 #2. */
+/* Profiles: 0 DHCP, 1 static host, 2 static client, 3 AUTO. */
 static int lan_profile = 0, lan_send_error = 0;
+static int auto_fallback_active = 0;
+static unsigned int auto_linklocal_ip = 0, auto_dhcp_poll_start = 0;
 static int lan_started_profile = -1, lan_start_count = 0, lan_init_stage = 0, lan_getconfig_rc = 0;
 static int lan_poll_getconfig_rc = -999, lan_poll_count = 0, lan_ready = 0;
 static int lan_cfg_dhcp_enabled = -1, lan_cfg_ip_zero = -1;
@@ -467,6 +469,15 @@ static void lan_start_worker(void) {
     net_init_attempted = 1;
     B79_TRACE("START_WORKER INIT ATTEMPT", net_init_attempted);
     lan_started_profile = lan_profile;
+    auto_fallback_active = 0;
+    auto_dhcp_poll_start = 0;
+    auto_linklocal_ip = 0;
+    if (lan_mac_valid) {
+        unsigned int hash = 5381U;
+        int m;
+        for (m=0;m<6;m++) hash = (hash * 33U) ^ lan_mac[m];
+        auto_linklocal_ip = (169U<<24)|(254U<<16)|((((hash>>8)%254U)+1U)<<8)|((hash%254U)+1U);
+    }
     lan_start_count++;
     lan_init_stage = 1;
     lan_ready = 0; lan_poll_count = 0; lan_poll_getconfig_rc = -999;
@@ -721,15 +732,15 @@ static void lan_tick(void) {
         if (lan_config_error != 1 && lan_poll_getconfig_rc >= 0 &&
             (lan_poll_count == 1 || lan_poll_count % 30 == 0)) {
             lan_getconfig_rc = lan_poll_getconfig_rc;
-            cfg.dhcp_enabled = (lan_started_profile == 0);
+            cfg.dhcp_enabled = (lan_started_profile == 0 || (lan_started_profile == 3 && !auto_fallback_active));
             if (cfg.dhcp_enabled) {
                 cfg.ipaddr.s_addr = 0;
                 cfg.netmask.s_addr = 0;
                 cfg.gw.s_addr = 0;
             } else {
-                cfg.ipaddr.s_addr = htonl((192U<<24) | (168U<<16) | (50U<<8) |
-                                          (100U + (unsigned int)lan_started_profile));
-                cfg.netmask.s_addr = htonl(0xFFFFFF00U);
+                cfg.ipaddr.s_addr = htonl(lan_started_profile == 3 ? auto_linklocal_ip :
+                    ((192U<<24) | (168U<<16) | (50U<<8) | (100U + (unsigned int)lan_started_profile)));
+                cfg.netmask.s_addr = htonl(lan_started_profile == 3 ? 0xFFFF0000U : 0xFFFFFF00U);
                 cfg.gw.s_addr = 0;
             }
             lan_config_error = ps2ip_setconfig(&cfg);
@@ -761,6 +772,18 @@ static void lan_tick(void) {
         lan_cfg_ip_zero = (cfg.ipaddr.s_addr == 0);
         tcp_gateway_ip=ntohl(cfg.gw.s_addr);
         tcp_netmask_ip=ntohl(cfg.netmask.s_addr);
+        if (lan_started_profile == 3 && !auto_fallback_active &&
+            cfg.dhcp_enabled && cfg.dhcp_status != DHCP_STATE_BOUND) {
+            if (!auto_dhcp_poll_start) auto_dhcp_poll_start = lan_poll_count;
+            if (lan_mac_valid && lan_poll_count - auto_dhcp_poll_start >= 600) {
+                auto_fallback_active = 1;
+                lan_config_error = -1;
+                lan_ready = 0;
+                printf("AUTO DHCP timeout: link-local candidate %08X (conflict unchecked)\n",auto_linklocal_ip);
+                fflush(stdout);
+                return;
+            }
+        }
         if (cfg.ipaddr.s_addr == 0 ||
             (cfg.dhcp_enabled && cfg.dhcp_status != DHCP_STATE_BOUND)) {
             lan_ready = 0;
@@ -820,7 +843,7 @@ static void lan_tick(void) {
         if (lan_frames <= 121 || lan_frames % 1200 == 1)
             printf("B80 SEND broadcast frame=%u result=%d success=%u fail=%u\n", lan_frames, n, lan_bcast_tx, lan_bcast_fail);
         /* Static profiles also send to the other console directly. */
-        if (lan_profile != 0) {
+        if (lan_profile == 1 || lan_profile == 2) {
             dest.sin_addr.s_addr = htonl((192U<<24)|(168U<<16)|(50U<<8)|(lan_profile==1?102U:101U));
             printf("B81 BEFORE SEND unicast frame=%u\n",lan_frames); fflush(stdout);
             n = sendto(lan_socket, packet, strlen(packet), 0, (struct sockaddr *)&dest, sizeof(dest));
@@ -1310,7 +1333,7 @@ static void draw(void) {
         label(34*sx,265*sy,1.05f*sx,muted,line);
         sprintf(line,"SELF RX: %u  INVALID RX: %u",lan_self_rx,lan_invalid_rx);
         label(34*sx,289*sy,1.05f*sx,muted,line);
-        sprintf(line,"PROFILE: %s",lan_profile==0?"DHCP":lan_profile==1?"PS2 #1 192.168.50.101":"PS2 #2 192.168.50.102");
+        sprintf(line,"PROFILE: %s",lan_profile==0?"DHCP":lan_profile==1?"PS2 #1 192.168.50.101":lan_profile==2?"PS2 #2 192.168.50.102":"AUTO DHCP / LINK-LOCAL (PROVISIONAL)");
         label(34*sx,313*sy,1.10f*sx,muted,line);
         sprintf(line,"B TX/RX:%u/%u  U TX/RX:%u/%u",lan_bcast_tx,lan_bcast_rx,lan_ucast_tx,lan_ucast_rx);
         label(34*sx,337*sy,1.02f*sx,muted,line);
@@ -1434,8 +1457,8 @@ int main(int argc, char **argv) {
             if (pressed & PAD_CROSS) { page = selected == 4 ? 6 : selected + 1; if(page == 1) probe_network_modules();  redraw = 1; }
         } else if (page == 3) {
             if (pressed & PAD_CIRCLE) { lan_request_cancel(); redraw = 1; }
-            if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_DOWN)) { lan_profile = (lan_profile + 1) % 3; redraw = 1; }
-            if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_UP)) { lan_profile = (lan_profile + 2) % 3; redraw = 1; }
+            if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_DOWN)) { lan_profile = (lan_profile + 1) % 4; redraw = 1; }
+            if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_UP)) { lan_profile = (lan_profile + 3) % 4; redraw = 1; }
             if ((lan_state == 0 || lan_state == 4) && !lan_worker_active && (pressed & PAD_CROSS)) lan_start();
         } else if (page == 6) {
             if (pressed & PAD_RIGHT) { input_diag_tab=(input_diag_tab+1)%3; redraw=1; }
