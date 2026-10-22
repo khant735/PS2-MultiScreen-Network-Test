@@ -48,7 +48,8 @@ static char rom_machine = '-';
 static int rom_eeconf = -1, rom_atad = -1, rom_iopbtconf = -1;
 static int rom_smap = -1, rom_speed = -1;
 /* LAN discovery protocol v1: UDP broadcast, automatic peer timeout. */
-extern unsigned char DEV9_irx[], NETMAN_irx[], SMAP_irx[];
+extern unsigned char DEV9_irx[], NETMAN_irx[], SMAP_irx[], MACPROBE_irx[];
+extern unsigned int size_MACPROBE_irx;
 extern unsigned int size_DEV9_irx, size_NETMAN_irx, size_SMAP_irx;
 #define DISCOVERY_PORT 39512
 #define HELLO_PREFIX "PS2MSNET/2 "
@@ -62,6 +63,41 @@ static char local_address[24] = "DHCP PENDING";
 static int lan_link = -1, lan_dhcp_status = -1, lan_config_error = 0;
 static unsigned char lan_mac[6] = {0};
 static int lan_mac_rc = -999, lan_mac_valid = 0;
+static unsigned char eeprom_mac[6] = {0};
+static int eeprom_mac_rc = -999, eeprom_mac_valid = 0;
+static int eeprom_probe_module_id = -999;
+#define MACPROBE_RPC_ID 0x4D534D41
+static SifRpcClientData_t eeprom_rpc_client __attribute__((aligned(64)));
+static unsigned char eeprom_rpc_send[64] __attribute__((aligned(64)));
+static unsigned char eeprom_rpc_recv[64] __attribute__((aligned(64)));
+static void read_dev9_eeprom_mac(void)
+{
+    int tries, rc, result;
+    memset(&eeprom_rpc_client, 0, sizeof(eeprom_rpc_client));
+    memset(eeprom_mac, 0, sizeof(eeprom_mac));
+    eeprom_mac_valid = 0;
+    eeprom_mac_rc = -100;
+    for (tries = 0; tries < 30; tries++) {
+        rc = SifBindRpc(&eeprom_rpc_client, MACPROBE_RPC_ID, 0);
+        if (rc < 0) { eeprom_mac_rc = rc; return; }
+        if (eeprom_rpc_client.server != NULL) break;
+        DelayThread(10000);
+    }
+    if (eeprom_rpc_client.server == NULL) { eeprom_mac_rc = -101; return; }
+    memset(eeprom_rpc_send, 0, sizeof(eeprom_rpc_send));
+    memset(eeprom_rpc_recv, 0, sizeof(eeprom_rpc_recv));
+    rc = SifCallRpc(&eeprom_rpc_client, 1, 0, eeprom_rpc_send,
+                    sizeof(eeprom_rpc_send), eeprom_rpc_recv,
+                    sizeof(eeprom_rpc_recv), NULL, NULL);
+    if (rc < 0) { eeprom_mac_rc = rc; return; }
+    memcpy(&result, eeprom_rpc_recv, sizeof(result));
+    eeprom_mac_rc = result;
+    if (result == 0) {
+        memcpy(eeprom_mac, eeprom_rpc_recv + 4, 6);
+        eeprom_mac_valid = 1;
+    }
+}
+
 /* Select before starting LAN: 0 DHCP, 1 static PS2 #1, 2 static PS2 #2. */
 static int lan_profile = 0, lan_send_error = 0;
 static int lan_started_profile = -1, lan_start_count = 0, lan_init_stage = 0, lan_getconfig_rc = 0;
@@ -379,6 +415,19 @@ static void lan_boot_load_modules(void) {
     lan_operation_completed = 7;
     if (rc < 0) { lan_boot_modules_error = rc; return; }
     lan_boot_netman_ready = 1;
+    /* Independent, read-only DEV9 EEPROM probe; failure is non-fatal. */
+    {
+        int probe_start_rc = -999;
+        eeprom_probe_module_id = SifExecModuleBuffer(MACPROBE_irx,
+            size_MACPROBE_irx, 0, NULL, &probe_start_rc);
+        if (eeprom_probe_module_id >= 0) read_dev9_eeprom_mac();
+        else eeprom_mac_rc = eeprom_probe_module_id;
+        printf("B86 EEPROM MAC module=%d start=%d rc=%d mac=%02X:%02X:%02X:%02X:%02X:%02X\n",
+               eeprom_probe_module_id, probe_start_rc, eeprom_mac_rc,
+               eeprom_mac[0],eeprom_mac[1],eeprom_mac[2],
+               eeprom_mac[3],eeprom_mac[4],eeprom_mac[5]);
+        fflush(stdout);
+    }
     /* Query the MAC exposed by the active DEV9/SMAP interface. */
     memset(lan_mac, 0, sizeof(lan_mac));
     lan_mac_rc = NetManIoctl(NETMAN_NETIF_IOCTL_ETH_GET_MAC, NULL, 0,
@@ -1206,8 +1255,16 @@ static void draw(void) {
                      lan_mac[0],lan_mac[1],lan_mac[2],lan_mac[3],lan_mac[4],lan_mac[5]);
         else
             snprintf(line,sizeof(line),"ADAPTER MAC: UNAVAILABLE (RC:%d)",lan_mac_rc);
-        label(34*sx,357*sy,1.00f*sx,muted,line);
-        label(34*sx,378*sy,1.00f*sx,muted,"OPEN DIAGNOSTIC COUNTERS; PRESS X TO INIT LAN");
+        label(34*sx,350*sy,0.91f*sx,muted,line);
+        if (eeprom_mac_valid)
+            snprintf(line,sizeof(line),"DEV9 EEPROM: %02X:%02X:%02X:%02X:%02X:%02X",
+                     eeprom_mac[0],eeprom_mac[1],eeprom_mac[2],eeprom_mac[3],eeprom_mac[4],eeprom_mac[5]);
+        else snprintf(line,sizeof(line),"DEV9 EEPROM: UNAVAILABLE (RC:%d)",eeprom_mac_rc);
+        label(34*sx,368*sy,0.91f*sx,muted,line);
+        snprintf(line,sizeof(line),"MAC MATCH: %s",
+                 !lan_mac_valid || !eeprom_mac_valid ? "UNAVAILABLE" :
+                 memcmp(lan_mac,eeprom_mac,6)==0 ? "YES" : "NO");
+        label(34*sx,386*sy,0.91f*sx,muted,line);
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
         label(34*sx,105*sy,2.0f*sx,white,line);
