@@ -60,6 +60,8 @@ static unsigned int lan_nonce = 0, peer_nonce = 0, lan_self_rx = 0, lan_invalid_
 static char peer_address[24] = "NONE";
 static char local_address[24] = "DHCP PENDING";
 static int lan_link = -1, lan_dhcp_status = -1, lan_config_error = 0;
+static unsigned char lan_mac[6] = {0};
+static int lan_mac_rc = -999, lan_mac_valid = 0;
 /* Select before starting LAN: 0 DHCP, 1 static PS2 #1, 2 static PS2 #2. */
 static int lan_profile = 0, lan_send_error = 0;
 static int lan_started_profile = -1, lan_start_count = 0, lan_init_stage = 0, lan_getconfig_rc = 0;
@@ -377,6 +379,15 @@ static void lan_boot_load_modules(void) {
     lan_operation_completed = 7;
     if (rc < 0) { lan_boot_modules_error = rc; return; }
     lan_boot_netman_ready = 1;
+    /* Query the MAC exposed by the active DEV9/SMAP interface. */
+    memset(lan_mac, 0, sizeof(lan_mac));
+    lan_mac_rc = NetManIoctl(NETMAN_NETIF_IOCTL_ETH_GET_MAC, NULL, 0,
+                             lan_mac, sizeof(lan_mac));
+    lan_mac_valid = (lan_mac_rc >= 0);
+    printf("B85 NETMAN MAC rc=%d mac=%02X:%02X:%02X:%02X:%02X:%02X\n",
+           lan_mac_rc, lan_mac[0], lan_mac[1], lan_mac[2],
+           lan_mac[3], lan_mac[4], lan_mac[5]);
+    fflush(stdout);
     /* Build 76: initialize TCP/IP on main EE thread before PAD/GS. */
     {
         struct ip4_addr ip, nm, gw;
@@ -1190,7 +1201,12 @@ static void draw(void) {
         label(34*sx,312*sy,1.05f*sx,muted,line);
         sprintf(line,"ROM SMAP:%s SPEED:%s",rom_smap==1?"YES":"NO",rom_speed==1?"YES":"NO");
         label(34*sx,334*sy,1.10f*sx,muted,line);
-        label(34*sx,357*sy,1.00f*sx,muted,"ROM PROBES DO NOT TEST BUNDLED DEV9/NETMAN/SMAP");
+        if (lan_mac_valid)
+            snprintf(line,sizeof(line),"ADAPTER MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                     lan_mac[0],lan_mac[1],lan_mac[2],lan_mac[3],lan_mac[4],lan_mac[5]);
+        else
+            snprintf(line,sizeof(line),"ADAPTER MAC: UNAVAILABLE (RC:%d)",lan_mac_rc);
+        label(34*sx,357*sy,1.00f*sx,muted,line);
         label(34*sx,378*sy,1.00f*sx,muted,"OPEN DIAGNOSTIC COUNTERS; PRESS X TO INIT LAN");
     } else if(page==2) {
         sprintf(line,"LAYOUT %d / %d",layout_index+1,LAYOUT_COUNT);
